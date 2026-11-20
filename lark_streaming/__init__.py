@@ -6,5 +6,5 @@
 Phase 1 当前交付：transport 层（CardKit REST 客户端 + 前代怪癖知识落地）。
 """
 
-__version__ = "0.0.3"
+__version__ = "0.0.1"  # 版本号由用户明示裁决变更（2026-11-20 纪律），禁止自动 bump
 PROTOCOL_VERSION = 1
