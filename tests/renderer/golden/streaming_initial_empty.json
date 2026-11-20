@@ -1,0 +1,51 @@
+{
+  "body": {
+    "elements": [
+      {
+        "content": "",
+        "element_id": "answer_content",
+        "margin": "0px 0px 0px 0px",
+        "tag": "markdown",
+        "text_align": "left",
+        "text_size": "normal_v2"
+      },
+      {
+        "element_id": "loading_icon",
+        "icon": {
+          "img_key": "img_v3_02vb_496bec09-4b43-4773-ad6b-0cdd103cd2bg",
+          "size": "16px 16px",
+          "tag": "custom_icon"
+        },
+        "tag": "div",
+        "text": {
+          "content": " ",
+          "tag": "plain_text"
+        }
+      }
+    ]
+  },
+  "config": {
+    "locales": [
+      "zh_cn",
+      "en_us"
+    ],
+    "streaming_config": {
+      "print_frequency_ms": {
+        "default": 70
+      },
+      "print_step": {
+        "default": 4
+      },
+      "print_strategy": "delay"
+    },
+    "streaming_mode": true,
+    "summary": {
+      "content": "Processing...",
+      "i18n_content": {
+        "en_us": "Processing...",
+        "zh_cn": "处理中..."
+      }
+    }
+  },
+  "schema": "2.0"
+}

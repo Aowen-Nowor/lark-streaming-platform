@@ -1,0 +1,195 @@
+{
+  "body": {
+    "elements": [
+      {
+        "border": {
+          "color": "grey",
+          "corner_radius": "5px"
+        },
+        "element_id": "agent_process_panel",
+        "elements": [
+          {
+            "icon": {
+              "color": "grey",
+              "size": "16px 16px",
+              "tag": "standard_icon",
+              "token": "robot-add_outlined"
+            },
+            "tag": "div",
+            "text": {
+              "content": "<font color='green'>**第 1 轮 · 1.2s**</font>",
+              "tag": "lark_md",
+              "text_size": "notation"
+            }
+          },
+          {
+            "margin": "0px 0px 0px 22px",
+            "tag": "div",
+            "text": {
+              "content": "<font color='grey'>先看目录结构</font>",
+              "tag": "lark_md",
+              "text_size": "notation"
+            }
+          },
+          {
+            "icon": {
+              "color": "grey",
+              "tag": "standard_icon",
+              "token": "code_outlined"
+            },
+            "tag": "div",
+            "text": {
+              "content": "<font color='green'>**Terminal (820 ms)**</font>",
+              "tag": "lark_md",
+              "text_size": "notation"
+            }
+          },
+          {
+            "margin": "0px 0px 0px 22px",
+            "tag": "div",
+            "text": {
+              "content": "ls -la",
+              "tag": "plain_text",
+              "text_color": "grey",
+              "text_size": "notation"
+            }
+          },
+          {
+            "icon": {
+              "color": "grey",
+              "size": "16px 16px",
+              "tag": "standard_icon",
+              "token": "robot-add_outlined"
+            },
+            "tag": "div",
+            "text": {
+              "content": "<font color='orange-300'>**第 2 轮**</font>",
+              "tag": "lark_md",
+              "text_size": "notation"
+            }
+          },
+          {
+            "margin": "0px 0px 0px 22px",
+            "tag": "div",
+            "text": {
+              "content": "<font color='grey'>分析 **输出** 中的模式</font>",
+              "tag": "lark_md",
+              "text_size": "notation"
+            }
+          },
+          {
+            "icon": {
+              "color": "grey",
+              "tag": "standard_icon",
+              "token": "file-link-text_outlined"
+            },
+            "tag": "div",
+            "text": {
+              "content": "<font color='orange-300'>**Read**</font>",
+              "tag": "lark_md",
+              "text_size": "notation"
+            }
+          },
+          {
+            "icon": {
+              "color": "grey",
+              "tag": "standard_icon",
+              "token": "info_outlined"
+            },
+            "tag": "div",
+            "text": {
+              "content": "已扫描 120 个文件",
+              "tag": "plain_text",
+              "text_color": "grey",
+              "text_size": "notation"
+            }
+          },
+          {
+            "icon": {
+              "color": "orange",
+              "tag": "standard_icon",
+              "token": "warning_outlined"
+            },
+            "tag": "div",
+            "text": {
+              "content": "Model fallback",
+              "tag": "plain_text",
+              "text_color": "orange",
+              "text_size": "notation"
+            }
+          }
+        ],
+        "expanded": true,
+        "header": {
+          "icon": {
+            "color": "grey",
+            "size": "16px 16px",
+            "tag": "standard_icon",
+            "token": "down-small-ccm_outlined"
+          },
+          "icon_expanded_angle": -180,
+          "icon_position": "right",
+          "title": {
+            "content": "agent loop · 2 个工具 · 12.3s",
+            "i18n_content": {
+              "en_us": "agent loop · 2 个工具 · 12.3s",
+              "zh_cn": "agent loop · 2 个工具 · 12.3s"
+            },
+            "tag": "plain_text",
+            "text_color": "grey",
+            "text_size": "notation"
+          },
+          "vertical_align": "center"
+        },
+        "padding": "8px 8px 8px 8px",
+        "tag": "collapsible_panel",
+        "vertical_spacing": "4px"
+      },
+      {
+        "content": "## 结论\n\n这是 **流式** 回答正文。",
+        "element_id": "answer_content",
+        "margin": "0px 0px 0px 0px",
+        "tag": "markdown",
+        "text_align": "left",
+        "text_size": "normal_v2"
+      },
+      {
+        "element_id": "loading_icon",
+        "icon": {
+          "img_key": "img_v3_02vb_496bec09-4b43-4773-ad6b-0cdd103cd2bg",
+          "size": "16px 16px",
+          "tag": "custom_icon"
+        },
+        "tag": "div",
+        "text": {
+          "content": " ",
+          "tag": "plain_text"
+        }
+      }
+    ]
+  },
+  "config": {
+    "locales": [
+      "zh_cn",
+      "en_us"
+    ],
+    "streaming_config": {
+      "print_frequency_ms": {
+        "default": 70
+      },
+      "print_step": {
+        "default": 4
+      },
+      "print_strategy": "delay"
+    },
+    "streaming_mode": true,
+    "summary": {
+      "content": "Processing...",
+      "i18n_content": {
+        "en_us": "Processing...",
+        "zh_cn": "处理中..."
+      }
+    }
+  },
+  "schema": "2.0"
+}

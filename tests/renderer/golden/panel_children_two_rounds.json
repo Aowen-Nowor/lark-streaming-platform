@@ -1,0 +1,112 @@
+[
+  {
+    "icon": {
+      "color": "grey",
+      "size": "16px 16px",
+      "tag": "standard_icon",
+      "token": "robot-add_outlined"
+    },
+    "tag": "div",
+    "text": {
+      "content": "<font color='green'>**第 1 轮 · 1.2s**</font>",
+      "tag": "lark_md",
+      "text_size": "notation"
+    }
+  },
+  {
+    "margin": "0px 0px 0px 22px",
+    "tag": "div",
+    "text": {
+      "content": "<font color='grey'>先看目录结构</font>",
+      "tag": "lark_md",
+      "text_size": "notation"
+    }
+  },
+  {
+    "icon": {
+      "color": "grey",
+      "tag": "standard_icon",
+      "token": "code_outlined"
+    },
+    "tag": "div",
+    "text": {
+      "content": "<font color='green'>**Terminal (820 ms)**</font>",
+      "tag": "lark_md",
+      "text_size": "notation"
+    }
+  },
+  {
+    "margin": "0px 0px 0px 22px",
+    "tag": "div",
+    "text": {
+      "content": "ls -la",
+      "tag": "plain_text",
+      "text_color": "grey",
+      "text_size": "notation"
+    }
+  },
+  {
+    "icon": {
+      "color": "grey",
+      "size": "16px 16px",
+      "tag": "standard_icon",
+      "token": "robot-add_outlined"
+    },
+    "tag": "div",
+    "text": {
+      "content": "<font color='green'>**第 2 轮**</font>",
+      "tag": "lark_md",
+      "text_size": "notation"
+    }
+  },
+  {
+    "margin": "0px 0px 0px 22px",
+    "tag": "div",
+    "text": {
+      "content": "<font color='grey'>分析 **输出** 中的模式</font>",
+      "tag": "lark_md",
+      "text_size": "notation"
+    }
+  },
+  {
+    "icon": {
+      "color": "grey",
+      "tag": "standard_icon",
+      "token": "file-link-text_outlined"
+    },
+    "tag": "div",
+    "text": {
+      "content": "<font color='orange-300'>**Read**</font>",
+      "tag": "lark_md",
+      "text_size": "notation"
+    }
+  },
+  {
+    "icon": {
+      "color": "grey",
+      "tag": "standard_icon",
+      "token": "info_outlined"
+    },
+    "tag": "div",
+    "text": {
+      "content": "已扫描 120 个文件",
+      "tag": "plain_text",
+      "text_color": "grey",
+      "text_size": "notation"
+    }
+  },
+  {
+    "icon": {
+      "color": "orange",
+      "tag": "standard_icon",
+      "token": "warning_outlined"
+    },
+    "tag": "div",
+    "text": {
+      "content": "Model fallback",
+      "tag": "plain_text",
+      "text_color": "orange",
+      "text_size": "notation"
+    }
+  }
+]

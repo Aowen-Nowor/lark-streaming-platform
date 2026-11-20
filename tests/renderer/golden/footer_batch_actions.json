@@ -1,0 +1,31 @@
+[
+  {
+    "action": "add_elements",
+    "params": {
+      "elements": [
+        {
+          "tag": "hr"
+        },
+        {
+          "content": "Completed · Elapsed 1m 5s · glm-5 · Context 120.0K/256.0K (46%) · Reasoning high",
+          "i18n_content": {
+            "en_us": "Completed · Elapsed 1m 5s · glm-5 · Context 120.0K/256.0K (46%) · Reasoning high",
+            "zh_cn": "已完成 · 耗时 1m 5s · glm-5 · 上下文 120.0K/256.0K (46%) · 思考 高"
+          },
+          "tag": "markdown",
+          "text_size": "notation"
+        }
+      ],
+      "target_element_id": "loading_icon",
+      "type": "insert_before"
+    }
+  },
+  {
+    "action": "delete_elements",
+    "params": {
+      "element_ids": [
+        "loading_icon"
+      ]
+    }
+  }
+]

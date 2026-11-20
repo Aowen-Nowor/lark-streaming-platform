@@ -1,0 +1,76 @@
+{
+  "body": {
+    "elements": [
+      {
+        "icon": {
+          "color": "orange",
+          "size": "20px 20px",
+          "tag": "standard_icon",
+          "token": "lock_outlined"
+        },
+        "tag": "div",
+        "text": {
+          "content": "**选择部署环境？**",
+          "tag": "lark_md"
+        }
+      },
+      {
+        "icon": {
+          "color": "orange",
+          "size": "16px 16px",
+          "tag": "standard_icon",
+          "token": "lock_outlined"
+        },
+        "tag": "div",
+        "text": {
+          "content": "Selected: production 生产",
+          "i18n_content": {
+            "en_us": "Selected: production 生产",
+            "zh_cn": "已选择: production 生产"
+          },
+          "tag": "lark_md"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "content": "*Submitted, awaiting confirmation...*",
+          "i18n_content": {
+            "en_us": "*Submitted, awaiting confirmation...*",
+            "zh_cn": "*已提交，等待确认...*"
+          },
+          "tag": "lark_md"
+        }
+      },
+      {
+        "behaviors": [
+          {
+            "type": "callback",
+            "value": {
+              "clarify_id": "c_1",
+              "lsp_clarify_action": "retry_submit"
+            }
+          }
+        ],
+        "tag": "button",
+        "text": {
+          "content": "Retry submission",
+          "i18n_content": {
+            "en_us": "Retry submission",
+            "zh_cn": "重试提交"
+          },
+          "tag": "plain_text"
+        },
+        "type": "primary"
+      }
+    ]
+  },
+  "config": {
+    "locales": [
+      "zh_cn",
+      "en_us"
+    ],
+    "streaming_mode": false
+  },
+  "schema": "2.0"
+}

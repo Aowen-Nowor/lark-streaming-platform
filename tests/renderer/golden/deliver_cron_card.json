@@ -1,0 +1,44 @@
+{
+  "body": {
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "content": "**Cronjob: 每日日程**",
+          "tag": "lark_md"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "content": "每日站会提醒：今天有 3 个日程。\n\n- 10:00 站会\n- 14:00 评审\n- 18:00 周报",
+        "tag": "markdown"
+      },
+      {
+        "icon": {
+          "color": "grey",
+          "tag": "standard_icon",
+          "token": "time_outlined"
+        },
+        "tag": "div",
+        "text": {
+          "content": "Cronjob · job_id: job_20261120_1",
+          "tag": "plain_text",
+          "text_color": "grey",
+          "text_size": "notation"
+        }
+      }
+    ]
+  },
+  "config": {
+    "locales": [
+      "zh_cn",
+      "en_us"
+    ],
+    "summary": {
+      "content": "Cronjob: 每日日程"
+    }
+  },
+  "schema": "2.0"
+}

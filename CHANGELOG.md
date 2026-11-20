@@ -9,7 +9,33 @@
 
 ## [Unreleased]
 
-- Phase 1（进行中）：
+- Phase 1：
+  - **renderer 层交付（M1 收口）** — 卡片 Schema v1 纯函数渲染（03-card-schema 全规格落地）：
+    - `state.py`：结构化渲染输入（RenderState/PanelRow/FooterStats/ClarifyForm）——
+      协议 v1 下渲染层零文本解析（前代 status_lines 文本启发式上移接入层
+      legacy 转换器）；round_finalized 显式字段承接 thinking.round.end，
+      单一所有者无推断
+    - `theme.py`：主题 token 显式注入（前代 tool_icons 180 行映射/i18n 文案/
+      字号 opt-in/页脚推理等级整体迁移）——前代 Config 单例直读的宿主感知
+      泄漏根除；terminal 只进图标表不进标题表等怪癖保留
+    - `md.py`：markdown 卫生化逐语义迁移（v2.0.21 审计 R5/R6 围栏状态机与
+      分块围栏感知）+ OPT-2/5 精确串缓存器（answer 单槽 / 面板行逐行 LRU）
+    - `elements.py`：CardKit wire 原语（前代生产验证结构逐字段一致）+
+      200 元素上限安全网（面板裁旧 + 折叠提示计数累计）
+    - `streaming.py`：引擎时点三产物绑定（initial/full/sealing 局部通道）+
+      字节预算裁剪（03 §6 冻结顺序 interim → thinking 历史轮 → answer 尾部
+      标注；页脚与终值永不裁——终值超限信任 200860 确定性拒收 → 降级红线
+      兜底）；面板收口幂等跳过（流式末渲染等值则零 API）
+    - `static.py`：deliver 旁路静态卡（前代 build_cron_card 语义：卫生化全链
+      + job_id 溯源行 + 空 body 占位红线）
+    - `clarify.py`：独立澄清卡五态（pending/answered/confirmed/unauthorized/
+      expired）——回调命名空间协议化（lsp_clarify_action，hermes 名词不进
+      协议）；「action」容器废弃红线（button 顶层元素）保留
+    - **wire 形态裁决**：clarify 按前代生产验证的独立卡形态交付，回合卡
+      槽位内嵌留待 L3 R7 真飞书实测定案（可靠性第一 D7——未经实证的
+      wire 形态不进主链）
+    - 测试 126 项全绿（行为回归 + 7 张 Golden 快照，03 §8 契约：
+      空面板/首行/多轮思考/工具合并/三态/页脚全字段/裁剪）
   - **transport 层交付** — 前代怪癖知识代码化（04-knowledge-freeze Q1-Q10 对应落地）：
     - `errors.py`：飞书错误码全集与判定谓词（16 常量：300317/200850/200860/
       300313/300314/300315/230099/11310/300305/99991400/300309/2200/1663/300000/

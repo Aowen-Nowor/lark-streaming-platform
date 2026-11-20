@@ -1,0 +1,98 @@
+{
+  "body": {
+    "elements": [
+      {
+        "icon": {
+          "color": "blue",
+          "size": "20px 20px",
+          "tag": "standard_icon",
+          "token": "info_outlined"
+        },
+        "tag": "div",
+        "text": {
+          "content": "**选择部署环境？**",
+          "tag": "lark_md"
+        }
+      },
+      {
+        "content": "A. production 生产\nB. staging 预发\nC. development 开发",
+        "tag": "markdown"
+      },
+      {
+        "behaviors": [
+          {
+            "type": "callback",
+            "value": {
+              "clarify_id": "c_1",
+              "lsp_clarify_action": "select"
+            }
+          }
+        ],
+        "element_id": "clarify_select",
+        "options": [
+          {
+            "text": {
+              "content": "A. production 生产",
+              "tag": "plain_text"
+            },
+            "value": "0"
+          },
+          {
+            "text": {
+              "content": "B. staging 预发",
+              "tag": "plain_text"
+            },
+            "value": "1"
+          },
+          {
+            "text": {
+              "content": "C. development 开发",
+              "tag": "plain_text"
+            },
+            "value": "2"
+          }
+        ],
+        "placeholder": {
+          "content": "Quick select...",
+          "i18n_content": {
+            "en_us": "Quick select...",
+            "zh_cn": "快速选择..."
+          },
+          "tag": "plain_text"
+        },
+        "tag": "select_static"
+      },
+      {
+        "behaviors": [
+          {
+            "type": "callback",
+            "value": {
+              "clarify_id": "c_1",
+              "lsp_clarify_action": "input_submit"
+            }
+          }
+        ],
+        "element_id": "clarify_input",
+        "max_length": 500,
+        "name": "clarify_input",
+        "placeholder": {
+          "content": "Type your answer...",
+          "i18n_content": {
+            "en_us": "Type your answer...",
+            "zh_cn": "请输入你的回答..."
+          },
+          "tag": "plain_text"
+        },
+        "tag": "input"
+      }
+    ]
+  },
+  "config": {
+    "locales": [
+      "zh_cn",
+      "en_us"
+    ],
+    "streaming_mode": false
+  },
+  "schema": "2.0"
+}
