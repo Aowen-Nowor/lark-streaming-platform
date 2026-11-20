@@ -3,7 +3,13 @@
 from ..credentials import FeishuCredentials
 from .budget import CARD_BYTE_BUDGET, assert_card_size, measure_card_bytes
 from .client import FeishuTransport
-from .errors import CardSizeExceeded, FeishuAPIError, is_transient_error
+from .errors import (
+    CardSizeExceeded,
+    FeishuAPIError,
+    is_definitive_reply_anchor_error,
+    is_rate_limit_error,
+    is_transient_error,
+)
 from .retry import retry_transient
 from .seq import call_with_seq_recovery
 from .token import TenantTokenManager
@@ -13,4 +19,5 @@ __all__ = [
     "FeishuAPIError", "CardSizeExceeded",
     "CARD_BYTE_BUDGET", "assert_card_size", "measure_card_bytes",
     "retry_transient", "call_with_seq_recovery", "is_transient_error",
+    "is_rate_limit_error", "is_definitive_reply_anchor_error",
 ]

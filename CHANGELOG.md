@@ -9,6 +9,37 @@
 
 ## [Unreleased]
 
+- Phase 2：
+  - **engine 编排层交付（02-engine 全规格落地）** — 显式回合状态机 + per-chat
+    队列 + 竞态守卫（前代 FrameComposer 2306 行隐式旗标的结构化重写）：
+    - `events.py`：LSEP/1 事件模型与消费面校验（信封字段表逐项；payload
+      只读视图；Ack/LifecycleEvent 协议 wire 形态；未知事件 fallback 不静默）
+    - `settings.py`：定时器冻结常量钳制（看门狗 300s/续期 540s/合并 0.2s/
+      澄清窗口 1.2s/卡 TTL 600s/降级冷却 429→60s 其他→30s，越界一律
+      钳进钉制范围不抛异常）
+    - `state.py`：TurnPhase（CREATING→STREAMING⇄PAUSED→SEALING→SEALED）×
+      ChatHealth（OK⇄DEGRADED⇄RECOVERING）正交双态；TurnState.seq 预递增
+      纪律 + stream_session_at 字段名与 transport.seq 写入约定逐字对齐
+    - `guards.py`：事件裁决表（decide 纯函数，owner 单一所有者）——含
+      **跨 turn 帧 fallback 红线**（旧回合迟到帧绝不误入新卡，01-protocol
+      §5.1 的协议化替代）
+    - `engine.py`：per-chat 有序队列 + 单消费者协程（取代前代 per-chat
+      asyncio.Lock；建卡窗口帧排队即幂等屏障，10-12 一轮 3 卡事故根治）；
+      全部定时器回调经队列串行执行（武装/让位/入队三动作，权威复查在
+      消费者侧）；定稿四步管道（终值 patch 致命 + 页脚/spinner/面板收口/
+      关流式装饰性——前代 finalize.py 铁律）；chat 级降级红线（失败帧必
+      fallback 带飞书码 + 冷却 fast-path + 冷却期满看门狗/帧双探测恢复）；
+      200850 自愈 reopen + 540s 主动续期；面板结构性行即时 flush / 改写类
+      0.2s 合并；deliver 完全旁路；seal_all_on_shutdown 先定稿再关停；
+      snapshot_health 观测面与守卫结构化打点（Phase 6 双跑对照数据源）
+    - 架构注记：02-engine §3.2/§3.3 建卡窗口 pending 缓冲（64 行上限）由
+      per-chat 有序队列天然实现（state.py docstring 实现注记）
+    - 测试 71 项全绿（信封校验矩阵/设置钳制/裁决表矩阵/生命周期 E2E/
+      建卡窗口幂等/澄清窗口竞态与续流/看门狗四态/降级红线全链/序列自愈
+      300317+200850/锚定降级直发 Q10/关停语义/GC 与 TTL/观测面）；
+      全仓 256 passed（185 基线零回归）；分层红线 grep 自查通过
+      （renderer/transport 零上层依赖、engine 零接入层依赖、零宿主 ABI
+      try-import）
 - Phase 1：
   - **renderer 层交付（M1 收口）** — 卡片 Schema v1 纯函数渲染（03-card-schema 全规格落地）：
     - `state.py`：结构化渲染输入（RenderState/PanelRow/FooterStats/ClarifyForm）——
