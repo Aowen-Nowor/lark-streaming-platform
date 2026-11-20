@@ -1,13 +1,13 @@
 [project]
 name = "lark-streaming-platform"
-version = "0.0.2"
+version = "0.0.3"
 description = "独立的飞书/Lark 流式卡片平台 — 任何 agent 通过统一事件协议接入（LSEP/1）"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 authors = [{ name = "Aowen-Nowor" }]
 dependencies = [
-    "lark-oapi>=1.6.4",
+    "httpx>=0.27",
     "PyYAML>=6.0",
 ]
 

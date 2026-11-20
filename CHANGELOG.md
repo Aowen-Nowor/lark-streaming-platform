@@ -3,6 +3,30 @@
 本仓库遵循语义化版本；0.0.x 为设计与骨架阶段。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.0.3] - 2026-11-20
+
+### Added
+
+- **Phase 1（进行中）transport 层交付** — 前代怪癖知识代码化（04-knowledge-freeze Q1-Q10 对应落地）：
+  - `errors.py`：飞书错误码全集与判定谓词（16 常量：300317/200850/200860/
+    300313/300314/300315/230099/11310/300305/99991400/300309/2200/1663/300000/
+    1000023/99992354 等）；200860 确定性拒收不可重试红线；230099 通用码
+    ErrCode 子码裁决；日志脱敏（token/secret）
+  - `token.py`：tenant_access_token 惰性管理（提前 300s 刷新、并发单飞、
+    凭证错误零重试）
+  - `retry.py`：退避分道（瞬态 0.1/0.3/0.6；限频 99991400 秒级 1/3/6；
+    网络错误同瞬态；CancelledError 永不吞）
+  - `seq.py`：300317 对齐自愈（seq+1 重发）+ 200850 重开会话闭环
+    （settings streaming_mode:true，跳号允许）；上限 3 次外上抛交降级红线
+  - `budget.py`：27000 字节本地预检（OPT-1c：省一次注定 200860 的往返）
+  - `client.py`：raw httpx REST 全端点（cardkit create/stream_element/
+    update/batch_update/settings[close|reopen|summary] + im send/reply）；
+    wire 形态与前代生产验证逐字段一致；纯 add_elements 非幂等绕过自动重试；
+    token 失效自刷新重试
+  - 测试 59 项全绿（L1 mock HTTP + 故障注入：429/300317/200850/200860/
+    300313/token 失效/取消穿透）
+- 依赖调整：lark-oapi SDK → httpx（raw REST 全权掌控，怪癖行为不再隔 SDK）
+
 ## [0.0.2] - 2026-11-20
 
 ### Changed
