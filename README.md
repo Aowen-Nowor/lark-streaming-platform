@@ -78,7 +78,7 @@
 | Phase 2 | 编排层（状态机 + 全部竞态守卫 + 降级） | **完成** |
 | Phase 3 | 协议层（LSEP/1 三绑定 stdio / HTTP / WS + hello 握手） | **完成** |
 | Phase 4 | 接入层（hermes 形态 A / openclaw 形态 B / legacy 转换器 / 网关 shell / ADAPTER_SDK） | **完成** |
-| Phase 5 | 测试台架（mock 移植 + 行为验收基线跑通） | 待开始 |
+| Phase 5 | 测试台架（mock 移植 + 行为验收基线跑通）+ L3 真飞书火力脚本 | **完成（真火待凭证）** |
 | Phase 6 | 双跑对照 → 生产切换 | 待开始 |
 
 ## 文档索引
@@ -108,6 +108,15 @@ if res.action is NativeAction.NATIVE:
 ```bash
 FEISHU_APP_ID=… FEISHU_APP_SECRET=… python -m lark_streaming --bind stdio
 # stdin 事件行 / stderr 回执行；HTTP / WS 绑定见 ADAPTER_SDK §3
+```
+
+## 真飞书验收（L3）
+
+```bash
+export FEISHU_E2E_REAL=1 FEISHU_E2E_APP_ID=cli_xxx FEISHU_E2E_APP_SECRET=xxx FEISHU_E2E_CHAT_ID=oc_xxx
+python3 scripts/e2e_real.py                 # 全场景真火（流式/面板/澄清/回复/并发）
+python3 scripts/e2e_real.py --mock          # 零写干跑（免凭证，L2 台架承载）
+python3 scripts/e2e_real.py --probe-rate-limit --probe-seq   # §6 知识冻结数值补测探针
 ```
 
 ## License

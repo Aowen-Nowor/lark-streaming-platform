@@ -9,6 +9,34 @@
 
 ## [Unreleased]
 
+- Phase 5：
+  - **L2 mock 台架交付（04-knowledge-freeze §5 移植主体）+ 行为验收基线全绿 +
+    L3 真飞书火力脚本**：
+    - `tests/harness/mock_feishu.py`：MockFeishuREST —— HTTP 层 mock（httpx
+      MockTransport 承载**真实 FeishuTransport 代码在环**：token 管理 / wire
+      JSON 字符串形态 / retry / seq 自愈 / 业务码裁决全走真路径），CardKit
+      五端点 + IM 三端点 + 可注入故障（fail_next/fail_always 分 HTTP 状态与
+      业务码、delay 建卡窗口挂起、strict_sequence 300317、expire_streaming
+      200850+官方 reopen 解除）
+    - `tests/harness/framework.py`：Harness 回合编排器（真实引擎 + 真实传输 +
+      FakeClock + 生命周期收集 + LSEP/1 信封构造）
+    - 行为验收基线 21 项全绿（§4 五族）：生命周期（全回合/回合外 deliver/
+      abort/停机 seal_all）、竞态（建卡窗口并发恰一卡 Q3 / 跨 chat 并行 /
+      新回合打断旧卡 superseded / T_renew 主动续期 / 200850 撞线自愈 Q2 /
+      300317 自愈 Q1）、降级（create 失败 fallback+降级 / 冷却静默探测恢复 /
+      持续失败零丢失 / stream 失败 30s 档）、clarify（窗口命中同卡暂停 /
+      超时真落定 / 表单三态）、渲染集成（懒面板 / 面板装配 / 27000 字节
+      裁剪 / 页脚零重放）
+    - `scripts/e2e_real.py`：L3 真火脚本（引擎+渲染+传输全栈直驱真实飞书
+      API）——12 场景（connect/plain/answer/progress/full/burst/clarify/
+      reply/renew/budget/ratelimit/seqconflict）+ `--mock` 零写干跑 + `--long`
+      主动续期真时序 + §6 五项数值补测探针（限频响应体/Retry-After、
+      300317 重放码与 reopen 最小间隔、reply 锚定群私差异、clarify 回调
+      码集 MANUAL 标注、字节预算阶梯细化）；速率自保护 ≥0.45s/帧
+    - L2 mock 干跑 9/9 场景 PASS；全仓 **423 passed**（基线 402 + harness 21）
+    - 真火执行待凭证注入（FEISHU_E2E_REAL=1 + FEISHU_E2E_APP_ID/SECRET/
+      CHAT_ID），README「真飞书验收（L3）」段含操作手册
+
 - Phase 4：
   - **接入层交付（05-adapters 全规格落地；ADR D8 脚手架定位）** —
     接入四件事的参考实现 + 网关 shell，核心层零感知（分层红线自检通过）：
