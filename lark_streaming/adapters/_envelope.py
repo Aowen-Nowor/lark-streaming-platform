@@ -56,6 +56,16 @@ class TurnRegistry:
         """注销回合（final 已投递 / abort 后调用）."""
         return self._turns.pop(chat_id, None)
 
+    def reopen(self, chat_id: str, ref: TurnRef, *, clock: float = 0.0) -> TurnRef:
+        """重新登记既有回合引用（澄清窗口命中后同卡续流；Phase 6 F1）.
+
+        传入原 TurnRef 对象——seq 计数 / thinking 开合 / Q9 去重集合
+        全部保持连续，续流帧与暂停前同一回合身份。
+        """
+        ref.opened_at = clock
+        self._turns[chat_id] = ref
+        return ref
+
 
 class EnvelopeBuilder:
     """LSEP/1 信封组装器（01-protocol §2 字段表；frame_id 全局唯一）.

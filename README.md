@@ -78,8 +78,8 @@
 | Phase 2 | 编排层（状态机 + 全部竞态守卫 + 降级） | **完成** |
 | Phase 3 | 协议层（LSEP/1 三绑定 stdio / HTTP / WS + hello 握手） | **完成** |
 | Phase 4 | 接入层（hermes 形态 A / openclaw 形态 B / legacy 转换器 / 网关 shell / ADAPTER_SDK） | **完成** |
-| Phase 5 | 测试台架（mock 移植 + 行为验收基线跑通）+ L3 真飞书火力脚本 | **完成（真火待凭证）** |
-| Phase 6 | 双跑对照 → 生产切换 | 待开始 |
+| Phase 5 | 测试台架（mock 移植 + 行为验收基线跑通）+ L3 真飞书火力脚本 | **完成（真火 9 场景 + §6 五项补测冻结）** |
+| Phase 6 | 双跑对照（旧/新同语料 12 场景 + 发现项修复 F1-F3）→ 生产切换 | **双跑完成（切换待用户裁决）** |
 
 ## 文档索引
 
@@ -90,6 +90,7 @@
 - [`docs/design/04-knowledge-freeze.md`](docs/design/04-knowledge-freeze.md) — 前代知识冻结（怪癖表 / 事故档案 / 验收基线）
 - [`docs/design/05-adapters.md`](docs/design/05-adapters.md) — 接入契约与双形态接入计划
 - [`docs/ADAPTER_SDK.md`](docs/ADAPTER_SDK.md) — **接入清单（四件事 / 双形态上手 / 配置面 / 降级履行）**
+- [`docs/dual-run-report.md`](docs/dual-run-report.md) — Phase 6 双跑对照报告（12 场景 / 发现项 F1-F3 处置 / 生产切换前置）
 
 ## 快速上手
 

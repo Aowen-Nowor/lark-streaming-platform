@@ -1,0 +1,8 @@
+{"scenario": "06_race_burst", "desc": "建卡窗口竞态（10-12 事故形态）：流式首帧与工具进度同刻齐发——两侧都必须恰建 1 卡（旧 per-chat 锁 / 新 per-chat 队列+注册表）"}
+{"op": "burst", "chat": "oc_c1", "sends": [
+  {"chat": "oc_c1", "content": "正在部署服务，预计 2 分钟。", "metadata": {"expect_edits": true}},
+  {"chat": "oc_c1", "content": "💻 deploy：kubectl rollout status", "metadata": {"_interim_send": true}},
+  {"chat": "oc_c1", "content": "💬 等待 rollout 完成探针就绪…", "metadata": {"_interim_send": true}}
+]}
+{"op": "edit", "chat": "oc_c1", "content": "部署完成：3 个副本全部就绪，新版本 v2.3.1 已生效。", "finalize": true}
+{"op": "settle", "ms": 60}

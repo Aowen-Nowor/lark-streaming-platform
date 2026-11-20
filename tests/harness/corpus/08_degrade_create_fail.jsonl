@@ -1,0 +1,7 @@
+{"scenario": "08_degrade_create_fail", "desc": "降级红线（create 确定性拒收 200860）：两回合全回原生零丢失（新侧冷却快路径 / 旧侧粘滞降级——恢复语义为 L2 基线覆盖，非本对照面）", "faults": [{"op": "create", "code": 200860, "times": 3, "sides": ["old", "new"]}]}
+{"op": "send", "chat": "oc_c1", "content": "第一回合：这句应当回退原生文本。", "metadata": {"expect_edits": true}}
+{"op": "edit", "chat": "oc_c1", "content": "第一回合终值：卡片通道不可用，原生履行。", "finalize": true}
+{"op": "sleep", "ms": 60}
+{"op": "send", "chat": "oc_c1", "content": "第二回合：冷却期内，仍走原生。", "metadata": {"expect_edits": true}}
+{"op": "edit", "chat": "oc_c1", "content": "第二回合终值：冷却未过，原生履行。", "finalize": true}
+{"op": "settle", "ms": 60}

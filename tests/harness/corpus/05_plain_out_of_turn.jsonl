@@ -1,0 +1,3 @@
+{"scenario": "05_plain_out_of_turn", "desc": "无标记普通文本（无活跃卡）：旧 R3 longform oneshot 静态卡 vs 新 deliver 旁路静态卡——两者同为静态卡（等价面）"}
+{"op": "send", "chat": "oc_c1", "content": "今日站会纪要：1) 版本冻结纪律重申；2) 双跑对照本周收口；3) 生产切换待用户裁决。", "reply_to": "om_user_2"}
+{"op": "settle", "ms": 60}

@@ -303,9 +303,171 @@ class TestClarifyAndAbort:
         assert res3.action is NativeAction.NATIVE
 
 
+class TestDualRunFindings:
+    """Phase 6 双跑对照发现项修复的适配器级验收（docs/dual-run-report.md）.
+
+    F1 澄清窗口可达性 / F2 无标记进度升格 / F3 cron 家族溯源。
+    时序用可注入假钟控制宽限窗口（与引擎 clarify_window 对齐 1.2s）。
+    """
+
+    @staticmethod
+    def _clock(t: float = 1000.0):
+        holder = {"t": t}
+        return holder, (lambda: holder["t"])
+
+    async def test_f1_clarify_grace_window_hit(self):
+        """边界 finalize → 窗口内 send_clarify → 同 turn PAUSED → 续流同卡."""
+        holder, clock = self._clock()
+        engine = FakeEngine()
+        adapter = HermesAdapter(engine, clock=clock)
+        r1 = await adapter.send(CHAT, "首帧", {"expect_edits": True})
+        turn_id = r1.turn_id
+        await adapter.edit(CHAT, "边界终值", finalize=True)  # 注册表关闭
+        res = await adapter.send_clarify(CHAT, question="选哪个？",
+                                         options=["A", "B"])
+        assert res.action is NativeAction.CONSUMED
+        assert res.turn_id == turn_id  # 原回合身份（宽限册）
+        req = engine.submitted[-1]
+        assert req["event"] == "clarify.request"
+        assert req["turn_id"] == turn_id
+        # 窗口命中后注册表重开：续流帧归同卡（seq 连续）
+        res2 = await adapter.edit(CHAT, "澄清后续流")
+        assert res2.action is NativeAction.CONSUMED
+        snap = engine.submitted[-1]
+        assert snap["event"] == "answer.snapshot"
+        assert snap["turn_id"] == turn_id
+        # 回答回流（注册表活跃 → 常规路径）→ 真终值
+        res3 = await adapter.clarify_answer(CHAT, values={"select": "A"})
+        assert res3.action is NativeAction.CONSUMED
+        await adapter.edit(CHAT, "真终值", finalize=True)
+        assert engine.submitted[-1]["event"] == "answer.final"
+        assert engine.submitted[-1]["turn_id"] == turn_id
+
+    async def test_f1_clarify_grace_window_expired_native(self):
+        """窗口已过（宽限册过期）→ 不触达引擎 → 原生 ask 履行."""
+        holder, clock = self._clock()
+        engine = FakeEngine()
+        adapter = HermesAdapter(engine, clock=clock)
+        await adapter.send(CHAT, "首帧", {"expect_edits": True})
+        await adapter.edit(CHAT, "终值", finalize=True)
+        holder["t"] += 5.0  # 窗口已过
+        res = await adapter.send_clarify(CHAT, question="还在吗？")
+        assert res.action is NativeAction.NATIVE
+        assert res.native_text == "还在吗？"  # 原生 ask：问题文本必达
+        assert res.detail == "clarify_without_stream"
+        assert engine.events()[-1] == "answer.final"  # 引擎未收到 clarify 帧
+
+    async def test_f1_clarify_engine_fallback_native(self):
+        """宽限命中但引擎裁决 fallback（SEALED 竞态）→ 原生 ask 履行."""
+        holder, clock = self._clock()
+        engine = FakeEngine(script=lambda env: Verdict.FALLBACK)
+        adapter = HermesAdapter(engine, clock=clock)
+        await adapter.send(CHAT, "首帧", {"expect_edits": True})
+        await adapter.edit(CHAT, "终值", finalize=True)
+        res = await adapter.send_clarify(CHAT, question="还在吗？")
+        assert res.action is NativeAction.NATIVE
+        assert res.native_text == "还在吗？"
+        assert res.detail == "fake_fallback"
+
+    async def test_f1_grace_invalidated_by_new_turn(self):
+        """新回合开启后宽限引用失效：clarify 归属新活跃回合."""
+        holder, clock = self._clock()
+        engine = FakeEngine()
+        adapter = HermesAdapter(engine, clock=clock)
+        await adapter.send(CHAT, "旧回合", {"expect_edits": True})
+        await adapter.edit(CHAT, "旧终值", finalize=True)
+        r2 = await adapter.send(CHAT, "新回合", {"expect_edits": True})
+        res = await adapter.send_clarify(CHAT, question="澄清")
+        assert res.action is NativeAction.CONSUMED
+        assert engine.submitted[-1]["turn_id"] == r2.turn_id  # 新回合，非宽限
+
+    async def test_f1_clarify_answer_grace_turn_id(self):
+        """注册表已关时 clarify.answer 携带宽限册内原 turn_id（幂等裁决）."""
+        holder, clock = self._clock()
+        engine = FakeEngine()
+        adapter = HermesAdapter(engine, clock=clock)
+        r1 = await adapter.send(CHAT, "首帧", {"expect_edits": True})
+        await adapter.edit(CHAT, "终值", finalize=True)
+        res = await adapter.clarify_answer(CHAT, values={"select": "B"})
+        assert res.action is NativeAction.CONSUMED
+        ans = engine.submitted[-1]
+        assert ans["event"] == "clarify.answer"
+        assert ans["turn_id"] == r1.turn_id
+
+    async def test_f2_unmarked_progress_buffers_pre_turn(self):
+        """无标记进度行（回合前）升格 → 暂存 → turn.start 后并入面板."""
+        holder, clock = self._clock()
+        engine = FakeEngine()
+        adapter = HermesAdapter(engine, clock=clock)
+        res = await adapter.send(CHAT, "💻 terminal：df -h")  # 无标记
+        assert res.action is NativeAction.CONSUMED
+        assert engine.submitted == []  # 回合前暂存（非 deliver 静态卡）
+        r2 = await adapter.send(CHAT, "答案首帧", {"expect_edits": True})
+        events = engine.events()
+        assert events[0] == "turn.start"
+        assert events[1] == "tool.start"  # 暂存进度并入
+        assert events[-1] == "answer.snapshot"
+        assert engine.submitted[1]["turn_id"] == r2.turn_id
+
+    async def test_f2_unmarked_progress_with_active_turn(self):
+        """活跃回合期无标记进度行 → 面板帧（不投散卡）."""
+        holder, clock = self._clock()
+        engine = FakeEngine()
+        adapter = HermesAdapter(engine, clock=clock)
+        await adapter.send(CHAT, "首帧", {"expect_edits": True})
+        n = len(engine.submitted)
+        res = await adapter.send(CHAT, "🔍 搜索网页 · feishu cardkit")
+        assert res.action is NativeAction.CONSUMED
+        assert engine.events()[n:] == ["tool.start"]
+
+    async def test_f2_plain_longform_still_deliver(self):
+        """普通独立正文（非进度启发）维持 deliver 静态卡（冻结契约不变）."""
+        holder, clock = self._clock()
+        engine = FakeEngine()
+        adapter = HermesAdapter(engine, clock=clock)
+        res = await adapter.send(CHAT, "今日站会纪要：三项决议，全部通过。")
+        assert res.action is NativeAction.CONSUMED
+        assert engine.events() == ["deliver"]
+
+    async def test_f3_cron_wrapped_routes_to_deliver_with_footer(self):
+        """job_id + 官方包装头 → deliver 静态卡：标题/正文剥离 + 溯源页脚."""
+        holder, clock = self._clock()
+        engine = FakeEngine()
+        adapter = HermesAdapter(engine, clock=clock)
+        content = ("Cronjob Response: 每日索引\n(job_id: 967430ee4ab2)\n"
+                   "--------------------------------\n"
+                   "索引完成：12847 条文档。")
+        res = await adapter.send(CHAT, content, {"notify": True, "job_id": "967430ee4ab2"})
+        assert res.action is NativeAction.CONSUMED
+        env = engine.submitted[-1]
+        assert env["event"] == "deliver"
+        assert env["payload"]["title"] == "每日索引"
+        assert env["payload"]["text"] == "索引完成：12847 条文档。"
+        assert env["payload"]["footer"] == {"job_id": "967430ee4ab2"}
+
+    async def test_f3_cron_unwrapped_keeps_text(self):
+        """job_id 但非包装内容 → deliver 原文透传 + 溯源页脚."""
+        holder, clock = self._clock()
+        engine = FakeEngine()
+        adapter = HermesAdapter(engine, clock=clock)
+        res = await adapter.send(CHAT, "队列已排水，无待处理任务。",
+                                 {"notify": True, "job_id": "j42"})
+        env = engine.submitted[-1]
+        assert env["event"] == "deliver"
+        assert env["payload"]["text"] == "队列已排水，无待处理任务。"
+        assert env["payload"]["footer"] == {"job_id": "j42"}
+
+    async def test_f3_cron_stream_frame_not_deliver(self):
+        """expect_edits + job_id → 流式回合路径（旧 oneshot 守卫同款）."""
+        holder, clock = self._clock()
+        engine = FakeEngine()
+        adapter = HermesAdapter(engine, clock=clock)
+        res = await adapter.send(CHAT, "首帧", {"expect_edits": True, "job_id": "j1"})
+        assert engine.events() == ["turn.start", "answer.snapshot"]
+
+
 class TestEnvelopeShape:
     """信封字段表逐项（01-protocol §2 消费面校验前置）。"""
-
     async def test_envelope_fields(self, adapter_and_engine):
         adapter, engine = adapter_and_engine
         await adapter.send(CHAT, "首帧", {"expect_edits": True}, reply_to="om_9")

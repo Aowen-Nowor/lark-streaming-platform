@@ -35,6 +35,8 @@ __all__ = [
     "THINKING_PREFIX", "EMOJI_RE",
     "strip_dedup_suffix", "parse_progress_line", "match_verb_line",
     "preview_text", "split_progress_segments",
+    # 双跑对照发现项移植（Phase 6）
+    "upgrade_plain", "parse_cron_delivery",
 ]
 
 # ── 通道常量（前代 classify.py CH_* 逐字对齐）───────────────────────────────
@@ -499,3 +501,94 @@ def classify_edit(
         kind="final" if finalize else "answer",
         raw_content=content or "",
     )
+
+
+# ── v2.0.1 上下文升格（前代 adapter._upgrade_plain_to_progress 语义移植）──────
+#
+# 双跑对照发现项 F2（Phase 6，03_progress_unmarked）：edit-transport 平台的
+# 工具进度气泡首发不带任何 metadata 标记——冻结契约「无标记 → deliver」会把
+# 每条进度行投成独立静态卡（散卡刷屏）。前代 v2.0.1 起以升格启发式吸收进
+# 状态面板（v2.0.4 去活跃卡前置：工具帧常早于答案首帧，升格后由 pending
+# 暂存承接；v2.0.8 notify/非对话通知永不升格；v2.0.31 回合内宽吸收）。
+# 本函数逐语义移植，供 HermesAdapter 在 CH_PLAIN 分支调用。
+
+
+def upgrade_plain(
+    content: str,
+    metadata: dict[str, Any] | None,
+    *,
+    has_active_turn: bool,
+) -> "ClassifyResult | None":
+    """裸 send 升格判定（前代 v2.0.1/v2.0.4/v2.0.8/v2.0.31 主链复刻）.
+
+    返回升格后的 ``ClassifyResult``（CH_PROGRESS）；不满足条件返回
+    ``None``（维持原分类 → deliver）。永不抛异常（内部全吞，失败维持
+    原分类，永不阻断投递主链）。
+    """
+    try:
+        meta = metadata or {}
+        # v2.0.8：notify/非对话通知（💾 Self-improvement review 等）永不升格
+        if meta.get("notify") or meta.get("non_conversational"):
+            return None
+        if not content or is_notice_text(content):
+            return None
+        if not is_progress_text(content):
+            if meta or len(content) > 4000:
+                return None
+            # 宽吸收只覆盖已知工具结构（emoji 工具头或 terminal 围栏），
+            # 普通独立正文即使很短也不得并入状态面板（v2.0.31 回合内宽吸收
+            # 前置：仅活跃回合期生效）
+            if not EMOJI_RE.match(content) and not content.lstrip().startswith("```"):
+                return None
+            if not has_active_turn:
+                return None
+        kind, tool, clean = parse_progress_line(content)
+        return ClassifyResult(
+            channel=CH_PROGRESS,
+            kind=kind,
+            tool_name=tool,
+            thinking_text=clean if kind == "thinking" else "",
+            raw_content=content,
+        )
+    except Exception:  # noqa: BLE001 — 升格失败维持原分类，永不阻断
+        return None
+
+
+# ── cron 投递解析（前代 cardkit/special.parse_cron_delivery 移植）────────────
+#
+# 双跑对照发现项 F3（Phase 6，11_cron_delivery）：hermes 调度投递官方包装头
+# （scheduler_delivery cron.wrap_response 默认 true）——旧侧按 R1 规则解析
+# 包装并落 cron 卡（标题 + job_id 溯源页脚）；新侧冻结契约把 notify=True
+# 映射为微回合定稿卡，包装头原文上卡、job_id 溯源丢失。移植解析供适配器
+# 把 cron 家族路由到 deliver（静态卡 + footer.job_id 溯源）。
+
+_CRON_HEAD_PREFIX = "Cronjob Response: "
+_CRON_JOB_ID_RE = re.compile(r"^\(job_id:\s*(.*?)\)\s*$")
+
+
+def parse_cron_delivery(content: str) -> "tuple[str, str, str]":
+    """解析官方 cron 投递包装头 → ``(task_name, job_id, body)``.
+
+    官方格式：首行 ``Cronjob Response: {name}``，次行 ``(job_id: {id})``，
+    第三行分隔线。非包装内容原样透传：返回 ``("", "", content)``。
+    任何解析异常降级为原样透传（内容永不丢失）。
+    """
+    try:
+        text = (content or "").strip("\n")
+        lines = text.split("\n")
+        title = job_id = ""
+        idx = 0
+        if lines and lines[0].startswith(_CRON_HEAD_PREFIX):
+            title = lines[0][len(_CRON_HEAD_PREFIX):].strip()
+            idx = 1
+            if len(lines) > idx:
+                m = _CRON_JOB_ID_RE.match(lines[idx].strip())
+                if m:
+                    job_id = m.group(1).strip()
+                    idx += 1
+            if len(lines) > idx and lines[idx].strip() and set(lines[idx].strip()) <= {"-"}:
+                idx += 1
+        body = "\n".join(lines[idx:]).strip()
+        return title, job_id, body
+    except Exception:  # noqa: BLE001 — 解析失败原样透传（内容永不丢失）
+        return "", "", content or ""

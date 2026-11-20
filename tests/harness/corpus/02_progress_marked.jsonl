@@ -1,0 +1,6 @@
+{"scenario": "02_progress_marked", "desc": "标记进度行（_interim_send 契约形态）：工具行+思考行先于流式首帧 → 面板行入卡 → 定稿（两侧面板等价面）"}
+{"op": "send", "chat": "oc_c1", "content": "💻 terminal：uname -r", "metadata": {"_interim_send": true}}
+{"op": "send", "chat": "oc_c1", "content": "💬 正在检查内核版本与运行时长，收集 uname 与 uptime 输出…", "metadata": {"_interim_send": true}}
+{"op": "send", "chat": "oc_c1", "content": "🔍 搜索网页 · linux kernel tsc clocksource", "metadata": {"_interim_send": true}}
+{"op": "send", "chat": "oc_c1", "content": "内核版本 6.8.0，时钟源 tsc。", "metadata": {"expect_edits": true}}
+{"op": "edit", "chat": "oc_c1", "content": "内核版本 6.8.0，时钟源 tsc，运行 12 天无重启。", "finalize": true}

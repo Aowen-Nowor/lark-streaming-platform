@@ -52,18 +52,33 @@ async def main():
         await transport.aclose()
 ```
 
-### 2.1 元数据契约映射表（前代 v0.21.x 官方 metadata，逐字对齐）
+### 2.1 元数据契约映射表（前代 v0.21.x 官方 metadata，逐字对齐；Phase 6 双跑对照修订）
 
 | hermes 出站 | LSEP/1 事件 | 说明 |
 |-------------|-------------|------|
-| `send(expect_edits=True)` | `turn.start` + `answer.snapshot` | 回合首帧；活跃回合在场 = 新回合越权（引擎 seal_and_create） |
+| `send(expect_edits=True)` | `turn.start` + `answer.snapshot` | 回合首帧；活跃回合在场 = 新回合越权（引擎 seal_and_create）；**同显式 `turn_id` 重发 = 幂等续流** |
 | `edit_message(finalize=False)` | `answer.snapshot` | 无活跃回合 = 孤儿编辑 → 原生履行 |
-| `edit_message(finalize=True)` | `answer.final` | 定稿；回合终结 |
+| `edit_message(finalize=True)` | `answer.final` | 定稿；回合终结（引擎开澄清窗口 T_pause） |
 | `_interim_send` 进度行 | `tool.start` / `thinking.delta`(+`thinking.round.end`) / `interim` | 经 legacy 分类器；回合前暂存，turn.start 后并入 |
 | `_interim_send` 通知行 | `notice` | 活跃卡并入面板；**无卡原生文本永不建卡**（跑马灯根因防线） |
 | `send(notify=True)` | `answer.final` | 无活跃回合 = 微回合自愈（turn.start + final） |
-| 无标记发送 | `deliver` | 回合外旁路静态卡（title/job_id 经 metadata） |
+| `send(job_id=…)`（cron 家族） | `deliver{title, text, footer.job_id}` | 官方包装头解析（标题/正文剥离）；前代 R1 规则对齐（Phase 6 F3） |
+| 无标记发送（启发式命中） | `tool.start` / `thinking.delta` | 前代 v2.0.1 升格主链：emoji 工具行/围栏块归面板，防散卡刷屏（Phase 6 F2） |
+| 无标记发送（未命中） | `deliver` | 回合外旁路静态卡（title/job_id 经 metadata） |
 | 平台通知（⚠️ 前缀） | `notice{level=warn}` | 子代理失败/超时固定前缀 |
+
+### 2.1.1 澄清窗口宽限（Phase 6 F1）
+
+边界 finalize → `send_clarify`（hermes 实测 <200ms 跟随）期间适配器
+注册表已注销。适配器内建**宽限册**（最近关闭回合 + 时间戳，窗口与
+引擎 `clarify_window_sec` 对齐）：
+
+- 窗口内：以原 `turn_id` 提交 `clarify.request` → 引擎
+  `clarify_window_hit` 同卡 PAUSED → 注册表重开（续流帧归同卡）；
+- 窗口已过 / 引擎 fallback：`DeliveryResult.action="native"` +
+  `native_text=question`（hermes 原生 ask 通道，问题文本必达）；
+- 澄清续流后宿主携原 `turn_id` 续投 = 同卡续流（v2.0.26 验收语义）；
+  不携 = 新卡（supersede 落定），两形态均零丢失。
 
 ### 2.2 降级履行规则（§1.4，消息永不丢由两侧共同保证）
 

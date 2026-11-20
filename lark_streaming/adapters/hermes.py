@@ -34,11 +34,30 @@ glue 不进本仓库；hermes 侧单点接线示例见 docs/ADAPTER_SDK.md）。
 干活阶段）在适配器侧行缓冲（上限 :attr:`pending_max`，与引擎
 CREATING 暂存 ``pending_max=64`` 对齐；answer 帧永不进缓冲也永不丢），
 turn.start 后按序并入新卡。
+
+双跑对照发现项修复（Phase 6，详见 docs/dual-run-report.md）：
+- **F1 澄清窗口可达性**：边界 finalize 后注册表已注销，hermes
+  ``send_clarify``（实测 <200ms 跟随 finalize）够不着引擎的澄清窗口
+  （L2 已证的 ``clarify_window_hit`` 裁决）。修复：final 关闭注册表时
+  保留最近回合引用 + 时间戳（宽限 = ``clarify_window_sec``）；窗口内
+  ``send_clarify`` 以原 turn_id 提交 ``clarify.request`` → 引擎同卡
+  PAUSED → ack consumed 后重开注册表（seq/thinking/Q9 状态全连续），
+  续流帧自然归属同卡；窗口已过（引擎 SEALED → fallback）→ 原生履行
+  （hermes 原生 ask 通道，native_text 携带问题文本）。
+- **F2 无标记进度升格**：edit-transport 平台工具气泡首发无标记，
+  冻结契约「无标记 → deliver」会把每条进度行投成散卡。移植前代
+  v2.0.1/v2.0.4/v2.0.8/v2.0.31 升格主链（``lt.upgrade_plain``）——
+  CH_PLAIN 先过升格启发式再落 deliver。
+- **F3 cron 家族溯源**：``job_id`` 帧（调度投递官方标记）解析官方
+  包装头（``lt.parse_cron_delivery``）路由 deliver 静态卡 +
+  ``footer.job_id`` 溯源（旧 R1 规则对齐；notify=True 的微回合形态
+  仅适用非 cron 回合外定稿）。
 """
 
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections import deque
 from dataclasses import dataclass
@@ -55,6 +74,9 @@ __all__ = ["DeliveryResult", "NativeAction", "HermesAdapter"]
 
 #: Q9 去重集合容量（超限停用本回合去重，防御长回合内存增长）
 _SEEN_PROGRESS_MAX = 256
+
+#: 澄清宽限默认（引擎 clarify_window_sec 钉制值对齐；构造参数可覆盖）
+_DEFAULT_CLARIFY_WINDOW_SEC = 1.2
 
 
 class NativeAction(str, Enum):
@@ -115,15 +137,20 @@ class HermesAdapter:
         frame_prefix: str = "hf",
         turn_prefix: str = "ht",
         clock: "callable | None" = None,  # type: ignore[valid-type]
+        clarify_window_sec: float = _DEFAULT_CLARIFY_WINDOW_SEC,
     ) -> None:
         self._engine = engine
         self._pending_max = max(8, int(pending_max))
         self._turns = TurnRegistry()
         self._frames = EnvelopeBuilder(prefix=frame_prefix, clock=clock)
-        self._turn_clock = clock or (lambda: 0.0)
+        # 宽限计时默认真单调钟（澄清窗口判定需要真实时序；测试可注入）
+        self._turn_clock = clock or time.monotonic
+        self._clarify_window_sec = max(0.0, min(30.0, float(clarify_window_sec)))
         self._turn_counter = 0
         self._pending: dict[str, deque[tuple[str, dict[str, Any]]]] = {}
         self._dropped: dict[str, int] = {}
+        # F1：最近关闭回合引用（澄清窗口内的 send_clarify 可达性）
+        self._last_closed: dict[str, tuple[TurnRef, float]] = {}
 
     # ── 公开出站钩子（hermes 元数据契约）────────────────────────────────
 
@@ -146,6 +173,25 @@ class HermesAdapter:
             reply_to = str(meta.get("reply_to") or "")
         result = lt.classify_send(content, metadata)
         channel = result.channel
+        # F3：cron 家族（官方调度标记 job_id）→ deliver 静态卡 + 溯源页脚
+        #（旧 R1 规则对齐；expect_edits/_interim_send 流式预览帧与
+        # progress/interim 通道不在此列——与旧 oneshot 守卫同款）
+        if (
+            str(meta.get("job_id") or "").strip()
+            and not meta.get("expect_edits")
+            and not meta.get("_interim_send")
+            and channel not in (lt.CH_PROGRESS, lt.CH_INTERIM)
+        ):
+            return await self._deliver_cron(chat_id, content, meta)
+        # F2：无标记升格（edit-transport 进度气泡；前代 v2.0.1 主链）
+        if channel == lt.CH_PLAIN:
+            upgraded = lt.upgrade_plain(
+                content, metadata,
+                has_active_turn=self._turns.active(chat_id) is not None,
+            )
+            if upgraded is not None:
+                result = upgraded
+                channel = result.channel
         if channel == lt.CH_STREAM:
             return await self._send_stream(chat_id, content, title=title, reply_to=reply_to,
                                            turn_id=turn_id)
@@ -185,7 +231,7 @@ class HermesAdapter:
         envs = self._close_thinking_envs(chat_id, ref)
         envs.append(self._final_env(chat_id, ref, content, stats))
         res = await self._submit_content(chat_id, envs, native_text=content, ref=ref)
-        self._turns.close(chat_id)
+        self._close_turn(chat_id)
         return res
 
     async def send_clarify(
@@ -197,28 +243,65 @@ class HermesAdapter:
         options: "list[str] | tuple[str, ...] | None" = None,
         placeholder: str = "",
     ) -> DeliveryResult:
-        """hermes ``send_clarify`` → ``clarify.request``（仅活跃回合内）.
+        """hermes ``send_clarify`` → ``clarify.request``（F1 澄清窗口可达）.
 
-        前代 clarify 卡可独立存在；协议 v1 的澄清语义锚定活跃回合
-        （02-engine：PAUSED 续流）。无活跃回合 → 原生履行（hermes
-        原生 ask 通道，如纯文本提问）。
+        三路径：
+        - 活跃回合在场（流式中澄清）→ 常规提交（引擎 clarify_pause）；
+        - 注册表空但最近回合在澄清窗口内关闭（边界 finalize → clarify
+          实测 <200ms 跟随）→ 以原 turn_id 提交；引擎 ``clarify_window_hit``
+          同卡 PAUSED → ack consumed 后重开注册表（续流帧归同卡）；
+        - 窗口已过（引擎 SEALED → fallback）→ 原生履行（hermes 原生 ask
+          通道，native_text 携带问题文本——内容永不丢）。
         """
         ref = self._turns.active(chat_id)
+        grace_ref: TurnRef | None = None
         if ref is None:
-            return DeliveryResult(action=NativeAction.NATIVE, detail="clarify_without_stream")
+            grace_ref = self._grace_ref(chat_id)
+            if grace_ref is None:
+                return DeliveryResult(action=NativeAction.NATIVE,
+                                      native_text=question,
+                                      detail="clarify_without_stream")
+        target = ref if ref is not None else grace_ref
         env = self._frames.build(
-            "clarify.request", chat_id=chat_id, turn_id=ref.turn_id,
+            "clarify.request", chat_id=chat_id, turn_id=target.turn_id,
             payload={"form": {
                 "kind": kind, "question": question,
                 "options": list(options or ()), "placeholder": placeholder,
             }},
         )
-        return await self._submit_content(chat_id, [env], native_text="", ref=ref)
+        ack = await self._engine.submit(env)
+        frames = (FrameVerdict(env["frame_id"], "clarify.request",
+                               ack.verdict.value, ack.detail),)
+        if ack.verdict is not Verdict.CONSUMED:
+            # 窗口已过 / 回合终结 → 原生 ask 通道（问题文本必达）
+            return DeliveryResult(
+                action=NativeAction.NATIVE, turn_id=target.turn_id,
+                native_text=question, detail=ack.detail or "clarify_fallback",
+                frames=frames,
+            )
+        if ref is None and grace_ref is not None:
+            # 窗口命中：重开注册表（同 TurnRef，seq/thinking/Q9 状态连续）
+            self._turns.reopen(chat_id, grace_ref,
+                               clock=float(self._turn_clock()))
+            self._last_closed.pop(chat_id, None)
+        return DeliveryResult(
+            action=NativeAction.CONSUMED, turn_id=target.turn_id,
+            frames=frames,
+        )
 
     async def clarify_answer(self, chat_id: str, *, values: dict[str, Any]) -> DeliveryResult:
-        """澄清交互回调回流 → ``clarify.answer``（非 PAUSED 被引擎幂等忽略）."""
+        """澄清交互回调回流 → ``clarify.answer``（非 PAUSED 被引擎幂等忽略）.
+
+        F1 宽限路径：注册表已关（回调时窗口已过/续流未发生）但最近回合
+        引用仍在宽限册内 → 以原 turn_id 提交，引擎按回合现态幂等裁决
+        （PAUSED → 续流；SEALED → ignore），控制帧无原生履行义务。
+        """
         ref = self._turns.active(chat_id)
-        turn_id = ref.turn_id if ref is not None else ""
+        if ref is None:
+            grace = self._grace_ref(chat_id, ttl=self._clarify_window_sec * 4)
+            turn_id = grace.turn_id if grace is not None else ""
+        else:
+            turn_id = ref.turn_id
         env = self._frames.build(
             "clarify.answer", chat_id=chat_id, turn_id=turn_id,
             payload={"values": dict(values or {})},
@@ -241,7 +324,7 @@ class HermesAdapter:
             payload={"reason": reason},
         )
         ack = await self._engine.submit(env)
-        self._turns.close(chat_id)  # 中止即终结注册表引用（引擎 SEAL_ABORT）
+        self._close_turn(chat_id)  # 中止即终结注册表引用（引擎 SEAL_ABORT）
         return DeliveryResult(
             action=NativeAction.CONSUMED, turn_id=ref.turn_id,
             detail=ack.detail,
@@ -271,6 +354,7 @@ class HermesAdapter:
             ]
             dropped = self._drain_pending(chat_id, new_id, envelopes)
             ref = self._turns.open(chat_id, new_id, clock=float(self._turn_clock()))
+            self._last_closed.pop(chat_id, None)  # 新回合开启：旧宽限引用失效
             envelopes.append(self._snapshot_env(chat_id, ref, content))
             res = await self._submit_content(chat_id, envelopes,
                                              native_text=content, ref=ref)
@@ -363,6 +447,7 @@ class HermesAdapter:
             # 回合前暂存的进度行并入本卡（前代 pending 并入语义）。
             new_id = self._new_turn_id()
             ref = self._turns.open(chat_id, new_id, clock=float(self._turn_clock()))
+            self._last_closed.pop(chat_id, None)  # 新回合开启：旧宽限引用失效
             envelopes: list[dict[str, Any]] = [
                 self._frames.build("turn.start", chat_id=chat_id, turn_id=new_id,
                                    payload={}),
@@ -372,12 +457,12 @@ class HermesAdapter:
             envelopes.append(self._final_env(chat_id, ref, content, stats))
             res = await self._submit_content(chat_id, envelopes,
                                              native_text=content, ref=ref)
-            self._turns.close(chat_id)
+            self._close_turn(chat_id)
             return res
         envs = self._close_thinking_envs(chat_id, ref)
         envs.append(self._final_env(chat_id, ref, content, stats))
         res = await self._submit_content(chat_id, envs, native_text=content, ref=ref)
-        self._turns.close(chat_id)
+        self._close_turn(chat_id)
         return res
 
     async def _deliver(
@@ -401,7 +486,56 @@ class HermesAdapter:
                               detail=ack.detail or f"deliver_{ack.verdict.value}",
                               frames=frames)
 
+    async def _deliver_cron(
+        self, chat_id: str, content: str, meta: dict[str, Any],
+    ) -> DeliveryResult:
+        """cron 家族（job_id）→ deliver 静态卡 + 溯源页脚（旧 R1 规则对齐）.
+
+        官方包装头（``Cronjob Response:``）解析为标题与正文（前代
+        ``parse_cron_delivery`` 语义移植）；解析失败原样透传（内容
+        永不丢失）。job_id 溯源经 ``footer.job_id`` 进静态卡页脚行。
+        """
+        job_id = str(meta.get("job_id") or "").strip()
+        title, _, body = lt.parse_cron_delivery(content)
+        payload: dict[str, Any] = {"text": body or content}
+        if title:
+            payload["title"] = title
+        if job_id:
+            payload["footer"] = {"job_id": job_id}
+        env = self._frames.build("deliver", chat_id=chat_id, payload=payload)
+        ack = await self._engine.submit(env)
+        frames = (FrameVerdict(env["frame_id"], "deliver", ack.verdict.value, ack.detail),)
+        if ack.verdict is Verdict.CONSUMED:
+            return DeliveryResult(action=NativeAction.CONSUMED, frames=frames)
+        # 溯源要求：原生履行时投递原文（含包装头），hermes 侧语义不变
+        return DeliveryResult(action=NativeAction.NATIVE, native_text=content,
+                              detail=ack.detail or f"deliver_{ack.verdict.value}",
+                              frames=frames)
+
     # ── 信封素材 ────────────────────────────────────────────────────────
+
+    def _close_turn(self, chat_id: str) -> None:
+        """关闭回合并记入宽限册（F1：澄清窗口内的 send_clarify 可达性）."""
+        closed = self._turns.close(chat_id)
+        if closed is not None:
+            self._last_closed[chat_id] = (closed, float(self._turn_clock()))
+
+    def _grace_ref(self, chat_id: str, *, ttl: float | None = None) -> TurnRef | None:
+        """宽限册查询：最近关闭回合，``ttl`` 内有效（默认 = 澄清窗口）.
+
+        新回合开启时宽限册条目即失效（引用已被覆盖语义替代）。
+        """
+        entry = self._last_closed.get(chat_id)
+        if entry is None:
+            return None
+        ref, closed_at = entry
+        window = self._clarify_window_sec if ttl is None else ttl
+        if window <= 0:
+            return None
+        if float(self._turn_clock()) - closed_at > window:
+            self._last_closed.pop(chat_id, None)
+            return None
+        return ref
 
     def _new_turn_id(self) -> str:
         self._turn_counter += 1

@@ -82,20 +82,30 @@ if ack["verdict"] != "consumed":
 
 ## 5. 参考接入方计划
 
-### 5.1 hermes（形态 A，Phase 4 交付）
+### 5.1 hermes（形态 A，Phase 4 交付；Phase 6 双跑对照修订）
 
 - 适配器翻译面：hermes 网关出站流（send/edit/interim/notify 元数据契约）
   → 事件流：
-  - `expect_edits=True` 出站 → `turn.start` + `answer.snapshot` 序列
+  - `expect_edits=True` 出站 → `turn.start` + `answer.snapshot` 序列；
+    **同显式 `turn_id` 重发 = 幂等续流**（宿主携回合身份；无 turn_id 的
+    重复 expect_edits = 新回合越权，引擎 seal_and_create 兜底）
   - 编辑流 final → `answer.final`
   - `_interim_send` 进度行 → `tool.*` / `thinking.*` / `interim`（经
     legacy 转换器）
-  - `notify=True` → `answer.final`；无标记发送 → `deliver`
+  - `notify=True` → `answer.final`（无活跃回合 = 微回合自愈）；
+    **`job_id` 帧（cron 家族）→ `deliver` 静态卡 + `footer.job_id`
+    溯源**（官方包装头解析，前代 R1 规则对齐；Phase 6 F3）
+  - 无标记发送 → **进度启发式升格**（emoji 工具行/围栏块 → 面板，
+    前代 v2.0.1/v2.0.4/v2.0.8/v2.0.31 主链对齐；Phase 6 F2），
+    未命中启发式 → `deliver`
   - 平台通知（⚠️ 子代理失败/超时前缀）→ `notice`
 - hermes 私有 API 访问继续收口在适配器内单点（前代 compat 先例），
   核心层零感知。
 - clarify：hermes `send_clarify` → `clarify.request`；交互回调 →
-  `clarify.answer` 回流。
+  `clarify.answer` 回流。**澄清窗口宽限（Phase 6 F1）**：边界 finalize
+  → send_clarify（实测 <200ms 跟随）经适配器宽限册触达引擎
+  `clarify_window_hit`（同卡 PAUSED + 注册表重开续流）；窗口已过 →
+  原生 ask 履行（native_text 携带问题文本，内容永不丢）。
 - **不做继承**：前代继承内置 `FeishuAdapter` 的入站能力留在 hermes 侧
   不动；本适配器只挂出站钩子。入站（WebSocket/webhook/媒体/门控）
   由 hermes 原生平台继续负责。

@@ -1,0 +1,9 @@
+{"scenario": "12_clarify_same_card", "desc": "同卡澄清续流（协议增强，仅新侧）：边界 finalize → 窗口内 clarify → PAUSED → answer → 续流携原 turn_id 归同卡 → 真终值（旧 edit-transport 结构性无法续写已定稿卡——对照基线见 09）", "sides": "new"}
+{"op": "send", "chat": "oc_c1", "content": "正在准备数据迁移方案，先评估规模。", "metadata": {"expect_edits": true}}
+{"op": "edit", "chat": "oc_c1", "content": "数据规模评估完成：约 12 万行，需要确认目标环境。", "finalize": true}
+{"op": "clarify", "chat": "oc_c1", "question": "迁移目标是测试环境还是生产环境？", "options": ["测试环境", "生产环境"]}
+{"op": "clarify_answer", "chat": "oc_c1", "values": {"select": "测试环境"}}
+{"op": "sleep", "ms": 80}
+{"op": "edit", "chat": "oc_c1", "content": "目标确认：测试环境。开始生成迁移脚本。"}
+{"op": "edit", "chat": "oc_c1", "content": "迁移方案完成：测试环境，分三批执行，预计 40 分钟。", "finalize": true}
+{"op": "settle", "ms": 80}

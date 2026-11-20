@@ -9,6 +9,43 @@
 
 ## [Unreleased]
 
+- Phase 6：
+  - **双跑对照交付（M4 收口）+ 发现项 F1/F2/F3 修复** — 同一段 hermes
+    出站流（12 场景语料）分别驱动前代终态（old-hermes-ref c826ee8
+    FrameComposer + 真实 build_streaming_card_v2 + 录制客户端）与本平台
+    全栈（HermesAdapter → 引擎 → 渲染 → 传输 → MockFeishuREST），逐场景
+    对照（报告：docs/dual-run-report.md，生成器：scripts/dual_run.py，
+    台架：tests/harness/dual_run.py + corpus/*.jsonl）：
+    - **消息永不丢红线跨实现成立**：全部场景双侧零静默丢弃；降级注入
+      （create 拒收 200860）双侧 4 帧全原生；竞态注入（10-12 事故形态）
+      双侧恰建 1 卡（结构性根治互证）
+    - **F1 澄清窗口可达性（修复）**：边界 finalize 后适配器注册表已注销，
+      hermes send_clarify 触达不了引擎 clarify_window_hit（L1/L2 各自
+      全绿但集成面断裂——双跑独有发现形态）。`TurnRegistry.reopen` +
+      适配器宽限册（最近关闭回合 + 时间戳，窗口对齐引擎 clarify_window_sec），
+      窗口命中重开注册表（seq/thinking/Q9 状态连续），过期 → 原生 ask
+      （native_text 携带问题文本，内容永不丢）
+    - **F2 无标记进度升格（修复）**：edit-transport 工具气泡首发无标记，
+      冻结契约「无标记 → deliver」散卡刷屏——前代 v2.0.1/v2.0.4/v2.0.8/
+      v2.0.31 升格主链移植 `lt.upgrade_plain`（CH_PLAIN 先过启发式再落
+      deliver）；05-adapters §5.1 映射表同步修订
+    - **F3 cron 家族溯源（修复）**：job_id 帧（官方调度标记）此前走微回合
+      卡、包装头原文上卡、job_id 溯源丢失——`lt.parse_cron_delivery` 移植
+      + `_deliver_cron` 路由（标题/正文剥离 + footer.job_id），前代 R1
+      规则对齐
+    - **同卡澄清续流 = 协议增强**：旧 edit-transport 定稿后结构性无法续写
+      （澄清续流 = 2 张回合卡）；新架构宿主携 turn_id 即同卡续流（语料
+      场景 12 实证）——v2.0.26 用户验收语义在协议层达成
+    - **字节预算再评估结论（04 §6 尾项闭环）**：双跑 mock 面零裁剪触发
+      （TrimReport 打点）；27000 维持不变（Phase 5 真火 100~120KB 实测
+      结论维持，保守裕度优先；放宽属用户裁决事项）
+    - clarify 回调授权失败码集维持 **MANUAL**（hermes 网关回调接线依赖，
+      M5 生产切换冒烟清单项）
+    - 设计/知识回填：05-adapters §5.1（Phase 6 双跑对照修订）+
+      04-knowledge-freeze §7（双跑对照冻结）+ ADAPTER_SDK §2.1/§2.1.1
+    - 测试：双跑验收 12 项（tests/harness/test_dual_run.py，旧仓缺席
+      自动 skip）+ 发现项专项 11 项（tests/adapters TestDualRunFindings）
+      全绿；全仓 **446 passed**（Phase 5 基线 423 零回归）
 - Phase 5：
   - **L2 mock 台架交付（04-knowledge-freeze §5 移植主体）+ 行为验收基线全绿 +
     L3 真飞书火力脚本**：

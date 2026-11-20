@@ -1,0 +1,8 @@
+{"scenario": "07_supersede_turn", "desc": "新回合打断旧卡（10-11 孤儿卡形态）：同显式 turn_id 重发 = 幂等续流；换 turn_id = 旧卡 seal 新卡开（协议回合身份 vs 旧隐式注册表——设计内分歧面）"}
+{"op": "send", "chat": "oc_c1", "content": "第一问回答开始：梳理配置项。", "metadata": {"expect_edits": true}, "turn_id": "T_race_001"}
+{"op": "send", "chat": "oc_c1", "content": "第一问回答开始：梳理配置项。", "metadata": {"expect_edits": true}, "turn_id": "T_race_001"}
+{"op": "edit", "chat": "oc_c1", "content": "第一问回答完成：共 5 个配置项，全部幂等。", "finalize": true}
+{"op": "settle", "ms": 60}
+{"op": "send", "chat": "oc_c1", "content": "第二问开始：重新分析。", "metadata": {"expect_edits": true}, "turn_id": "T_race_002"}
+{"op": "edit", "chat": "oc_c1", "content": "第二问完成：结论与第一问一致。", "finalize": true}
+{"op": "settle", "ms": 60}

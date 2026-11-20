@@ -1,0 +1,3 @@
+{"scenario": "11_cron_delivery", "desc": "cron 调度投递（官方包装头 + job_id）：旧 R1 cron 卡 vs 新 deliver 静态卡 + footer.job_id 溯源（F3 修复验收面）"}
+{"op": "send", "chat": "oc_c1", "content": "Cronjob Response: 每日索引\n(job_id: 967430ee4ab2)\n--------------------------------\n索引完成：共 12847 条文档，增量 342 条，耗时 3m12s。", "metadata": {"notify": true, "job_id": "967430ee4ab2"}}
+{"op": "settle", "ms": 60}

@@ -1,0 +1,5 @@
+{"scenario": "03_progress_unmarked", "desc": "无标记进度行（edit-transport 形态，v2.0.1 升格面）：旧侧升格进面板；新侧按冻结契约 deliver 静态卡——设计内分歧面（05-adapters §5.1）"}
+{"op": "send", "chat": "oc_c1", "content": "💻 terminal：df -h"}
+{"op": "send", "chat": "oc_c1", "content": "📖 读取文件 /etc/fstab"}
+{"op": "send", "chat": "oc_c1", "content": "磁盘占用检查完成：根分区 62%，无异常挂载。", "metadata": {"expect_edits": true}}
+{"op": "edit", "chat": "oc_c1", "content": "磁盘占用检查完成：根分区 62%，inode 充足，无异常挂载点。", "finalize": true}

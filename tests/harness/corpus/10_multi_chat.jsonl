@@ -1,0 +1,8 @@
+{"scenario": "10_multi_chat", "desc": "双 chat 交错（隔离面）：两回合并行推进互不串卡（面板/终值/降级计数均 per-chat）"}
+{"op": "send", "chat": "oc_cA", "content": "A 回合开始：检查服务 A。", "metadata": {"expect_edits": true}}
+{"op": "send", "chat": "oc_cB", "content": "B 回合开始：检查服务 B。", "metadata": {"expect_edits": true}}
+{"op": "send", "chat": "oc_cA", "content": "💻 curl：healthcheck A", "metadata": {"_interim_send": true}}
+{"op": "send", "chat": "oc_cB", "content": "💻 curl：healthcheck B", "metadata": {"_interim_send": true}}
+{"op": "edit", "chat": "oc_cA", "content": "服务 A 健康：200 OK，延迟 12ms。", "finalize": true}
+{"op": "edit", "chat": "oc_cB", "content": "服务 B 健康：200 OK，延迟 18ms。", "finalize": true}
+{"op": "settle", "ms": 60}

@@ -113,3 +113,40 @@ send_by_id / stream_element / update / close_streaming 五端点 + 可注入
   **99992402** "field validation failed"，非 200860）；**200860 在全部
   测量路径未复现**。处置：27000 本地预算保持不变（前代生产实测安全值，
   保守裕度继续提供缓冲），知识如实冻结，Phase 6 双跑阶段再评估是否放宽。
+
+## 7. Phase 6 双跑对照冻结（2026-11-20，scripts/dual_run.py + docs/dual-run-report.md）
+
+同一段 hermes 出站流（12 场景语料）分别驱动前代终态（old-hermes-ref
+@ c826ee8，FrameComposer + 真实 build_streaming_card_v2 + 录制客户端）
+与本平台全栈（HermesAdapter → 引擎 → 渲染 → 传输 → MockFeishuREST），
+逐场景对照卡片数 / 原生回退 / 终值保真 / API 计数：
+
+- [x] **消息永不丢红线跨实现成立**：全部场景双侧零静默丢弃；降级注入
+  （create 确定性拒收 200860）旧/新均 4 帧全原生履行。竞态注入
+  （流式首帧 + 进度行同刻齐发，10-12 事故形态）双侧均恰建 1 卡
+  （旧 per-chat 锁 / 新 per-chat 队列+注册表，结构性根治互证）。
+- [x] **发现项 F1（澄清窗口可达性）**：边界 finalize 后适配器注册表已
+  注销，hermes `send_clarify`（<200ms 跟随）触达不了引擎
+  `clarify_window_hit`（L2 已证语义、适配器够不着——L1/L2 各自全绿但
+  集成面断裂，双跑独有的发现形态）。修复：适配器宽限册（最近关闭
+  回合 + 时间戳，窗口 = 引擎 `clarify_window_sec` 对齐 1.2s），窗口
+  命中重开注册表（seq/thinking/Q9 状态全连续），过期 → 原生 ask。
+- [x] **发现项 F2（无标记进度升格）**：edit-transport 工具气泡首发
+  无标记，冻结契约「无标记 → deliver」会散卡刷屏；前代 v2.0.1 升格
+  主链（v2.0.4/v2.0.8/v2.0.31 修订）移植为 `lt.upgrade_plain`，
+  05-adapters §5.1 映射表同步修订。
+- [x] **发现项 F3（cron 家族溯源）**：`job_id` 帧（官方调度标记）此前
+  走微回合卡、包装头原文上卡、job_id 溯源丢失；`lt.parse_cron_delivery`
+  移植 + `_deliver_cron` 路由（标题/正文剥离 + `footer.job_id`），
+  前代 R1 规则对齐。
+- [x] **同卡澄清续流 = 协议增强（非回归项）**：旧 edit-transport 定稿后
+  结构性无法续写（FIX-3 迟到 edit 丢弃语义 + active_state 过滤 finalized），
+  澄清续流=2 张回合卡；新架构宿主携 `turn_id` 即同卡续流
+  （场景 12 实证：暂停 → 回答 → 同卡真终值）。v2.0.26 用户验收语义
+  在协议层达成，宿主接线决策（携/不携 turn_id）均零丢失。
+- [x] **字节预算再评估结论（§6 尾项闭环）**：双跑 mock 面无超预算裁剪
+  发生（TrimReport 打点零触发）；Phase 5 真火结论维持——**27000 保持
+  不变**。放宽与否属用户裁决事项（可靠性第一 D7：保守裕度优先）。
+- [~] **clarify 回调授权失败码集**：维持 **MANUAL**——双跑 mock 环境
+  无法实证 hermes 网关回调接线；生产切换（M5）冒烟清单项，随真机
+  接线实测后回填。

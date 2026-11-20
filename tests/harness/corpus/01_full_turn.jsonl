@@ -1,0 +1,4 @@
+{"scenario": "01_full_turn", "desc": "基线全回合：expect_edits 首帧 → 编辑流 ×2 → 边界 finalize（对照：恰 1 卡 / 终值保真 / 零原生回退）"}
+{"op": "send", "chat": "oc_c1", "content": "正在查看系统时间，请稍候。", "metadata": {"expect_edits": true}, "reply_to": "om_user_1"}
+{"op": "edit", "chat": "oc_c1", "content": "系统时间检查完成：当前为北京时间 14:30，时区 Asia/Shanghai，NTP 同步正常。"}
+{"op": "edit", "chat": "oc_c1", "content": "系统时间检查完成：当前为北京时间 14:30，时区 Asia/Shanghai，NTP 同步正常。\n\n补充：内核时钟源为 tsc，无漂移记录。", "finalize": true}
