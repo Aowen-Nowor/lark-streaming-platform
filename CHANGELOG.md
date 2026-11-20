@@ -34,8 +34,17 @@
       300317 重放码与 reopen 最小间隔、reply 锚定群私差异、clarify 回调
       码集 MANUAL 标注、字节预算阶梯细化）；速率自保护 ≥0.45s/帧
     - L2 mock 干跑 9/9 场景 PASS；全仓 **423 passed**（基线 402 + harness 21）
-    - 真火执行待凭证注入（FEISHU_E2E_REAL=1 + FEISHU_E2E_APP_ID/SECRET/
-      CHAT_ID），README「真飞书验收（L3）」段含操作手册
+    - **真火执行完成（2026-11-20，真实租户全栈直驱）**：默认 9 场景 8/9 PASS
+      （budget 为测量发现非缺陷）+ 探针/续期补测全通过——卡片/面板/澄清/
+      回复/并发收敛全链路在真实飞书可视化验证；§6 五项实测冻结（详见
+      04-knowledge-freeze §6）：限频新码 **200937**（卡级频控 "card updated
+      too frequently"，已入册 errors.py 瞬态族）与 99991400 分道；300317
+      同号重放必拒/跳号允许/reopen 最小链 0.20s；伪锚点 99992354 + Q10
+      降级直发真火回归；**官方 30KB 口径与实体卡实测严重不符**（create/
+      stream/update 均至 100KB 接受，stream 内容上限 100~120KB 以 99992402
+      字段校验形态出现，200860 全路径未复现）——27000 本地预算保持保守
+      裕度不变；T_renew 主动续期真时序（60s 钳制档）触发无 200850；clarify
+      回调码集标 MANUAL 留 Phase 6
 
 - Phase 4：
   - **接入层交付（05-adapters 全规格落地；ADR D8 脚手架定位）** —

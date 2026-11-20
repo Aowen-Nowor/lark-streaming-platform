@@ -18,6 +18,9 @@ CARDKIT_STREAMING_CLOSED = 300309    # 卡片流式模式已关闭
 CARDKIT_SEQUENCE_CONFLICT = 300317   # sequence 冲突（可自愈，见 seq.py）
 CARDKIT_STREAMING_TIMEOUT = 200850   # 流式会话超时（官方 ~10min 寿命，见 seq.py）
 CARDKIT_CARD_SIZE = 200860           # 卡片体积超限（官方 30KB 上限，确定性拒收）
+CARDKIT_CARD_RATE_LIMIT = 200937     # 卡级频控（2026-11-20 L3 真火实测：并发同元素
+                                     # 竞速触发，msg="card updated too frequently"；
+                                     # 与 99991400 平台 API 级频控分道）
 CARDKIT_ELEMENT_NOT_FOUND = 300313   # 元素不存在（add 后服务端未持久化的竞态）
 CARDKIT_ELEMENT_NOT_FOUND_ALT = 300314  # delete_elements 不存在的元素
 MSG_NOT_FOUND = 1000023              # 消息不存在/已删除
@@ -36,6 +39,7 @@ CARDKIT_TRANSIENT_CODES = frozenset({
     1663,       # CardKit 服务端瞬态错误
     300000,     # CardKit 通用内部错误
     99991400,   # 接口频率限制（per-API rate limit，HTTP 400 承载）
+    200937,     # 卡级频控 "card updated too frequently"（2026-11-20 L3 真火实测入册）
 })
 
 _RATE_LIMIT_CODE = 99991400
@@ -184,7 +188,8 @@ __all__ = [
     "FeishuAPIError", "CardSizeExceeded", "sanitize_message",
     "CARDKIT_CONTENT_FAILED", "CARDKIT_ELEMENT_LIMIT", "CARDKIT_ELEMENT_LIMIT_DIRECT",
     "CARDKIT_SCHEMA_ERROR", "CARDKIT_STREAMING_CLOSED", "CARDKIT_SEQUENCE_CONFLICT",
-    "CARDKIT_STREAMING_TIMEOUT", "CARDKIT_CARD_SIZE", "CARDKIT_ELEMENT_NOT_FOUND",
+    "CARDKIT_STREAMING_TIMEOUT", "CARDKIT_CARD_SIZE", "CARDKIT_CARD_RATE_LIMIT",
+    "CARDKIT_ELEMENT_NOT_FOUND",
     "CARDKIT_ELEMENT_NOT_FOUND_ALT", "MSG_NOT_FOUND", "REPLY_ANCHOR_INVALID",
     "MSG_RECALLED", "MSG_DELETED", "REPLY_ANCHOR_TERMINAL_CODES",
     "CARDKIT_TRANSIENT_CODES",

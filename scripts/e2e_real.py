@@ -678,7 +678,9 @@ async def sc_budget(d: Driver) -> ScenarioResult:
     except Exception as exc:  # noqa: BLE001
         r.check(False, f"常规 create 26.5KB 失败 code={getattr(exc, 'code', 0)}")
     # 1) 阶梯（旁路本地预检，测真实拒收线）
-    ladder = [27_500, 28_500, 29_000, 29_500, 30_000, 30_500]
+    # 首轮真火实测（2026-11-20）：39990B 仍被接受——官方文档 30KB 上限与
+    # 实测严重不符，阶梯拉至 100KB 找真实拒收线（§6-5 的目的正在于此）。
+    ladder = [45_000, 50_000, 55_000, 60_000, 70_000, 80_000, 100_000]
     accepted: list[int] = []
     rejected: dict[int, int] = {}
     for size in ladder:
@@ -693,8 +695,14 @@ async def sc_budget(d: Driver) -> ScenarioResult:
             rejected[actual] = code
             r.info(f"create {actual}B → 拒收 code={code}")
         await settle(0.3)
-    r.check(bool(rejected), "拒收线在阶梯中出现（真实阈值有界）")
-    if accepted and rejected:
+    if rejected:
+        r.check(all(c in (200860, 230099) for c in rejected.values()), f"拒收码形态={set(rejected.values())}（预期 200860 族）")
+    else:
+        r.info("拒收线未在本阶梯出现（见下方事实记录）——不是缺陷，是测量发现")
+    if rejected and not accepted:
+        # 阶梯全拒：说明真实线低于阶梯下限——不可能（26.5KB 已过），防御分支
+        r.measure("byte_budget_real", f"all-rejected>={min(rejected)}（异常形态，需人工复核）")
+    elif rejected:
         lo, hi = max(accepted), min(rejected)
         r.measure("byte_budget_real", f"accept<={lo} reject>={hi}（浮动带 {hi - lo}B；冻结值 27000 的裕度区间）")
         # 2) 512B 步进细化
@@ -711,6 +719,44 @@ async def sc_budget(d: Driver) -> ScenarioResult:
             await settle(0.25)
         r.measure("byte_budget_refined", f"accept<={cur} reject>={hi_v}")
         _logger.warning("budget refine: accept<=%d reject>=%d", cur, hi_v)
+    else:
+        # 整条阶梯（含 100KB）全被接受：真实拒收线高于测量上限——按事实记录，
+        # 官方文档 30KB 口径与 CardKit 实体卡 create 实测不符（冻结知识待修正）。
+        r.info(f"阶梯全接受至 {max(accepted)}B：create 路径未见拒收线（口径与官方文档不符，按事实记录）")
+        r.measure("byte_budget_real", f"accept<={max(accepted)} no-reject-found")
+    # 3) 流式内容 / 全量更新上限（200860 猎场迁移测量——2026-11-20 真火发现
+    #    体积拒收不在 create 路径，而 stream content 上限以 99992402 字段校验
+    #    形态出现在 100~120KB 之间）
+    probe_card = await d.rt.cardkit_create(render_initial_card(RenderState(), DEFAULT_THEME))
+    nxt = 1
+    for kb in (30, 60, 100, 120):
+        nxt += 10
+        try:
+            await d.rt.cardkit_stream_element(
+                probe_card, ANSWER_ELEMENT_ID, "X" * (kb * 1000), sequence=nxt,
+            )
+            r.info(f"stream_element {kb}KB → 接受")
+        except Exception as exc:  # noqa: BLE001
+            r.info(f"stream_element {kb}KB → 拒 code={getattr(exc, 'code', 0)} msg={str(exc)[:60]}")
+    for kb in (35, 100):
+        card = render_initial_card(RenderState(), DEFAULT_THEME)
+        card.setdefault("body", {}).setdefault("elements", []).append(
+            {"tag": "markdown", "content": "P" * (kb * 1000 - measure_card_bytes(card) - 46)}
+        )
+        nxt += 10
+        try:
+            # 旁路本地预算预检（测量目的：服务端真实上限；与 raw_cardkit_create 同理）
+            await d.rt._inner._request(  # noqa: SLF001
+                "PUT", f"/cardkit/v1/cards/{probe_card}",
+                json_body={
+                    "card": {"type": "card_json", "data": json.dumps(card, ensure_ascii=False)},
+                    "sequence": nxt,
+                },
+                operation="cardkit_update[probe]",
+            )
+            r.info(f"cardkit_update {measure_card_bytes(card) // 1000}KB → 接受")
+        except Exception as exc:  # noqa: BLE001
+            r.info(f"cardkit_update {measure_card_bytes(card) // 1000}KB → 拒 code={getattr(exc, 'code', 0)} msg={str(exc)[:60]}")
     return r
 
 
@@ -720,13 +766,14 @@ async def sc_ratelimit(d: Driver) -> ScenarioResult:
     token = await d.rt._inner._token.get_token()  # noqa: SLF001 — 探针需原始 HTTP 面
     url = f"{d.env.base_url}/cardkit/v1/cards/{pc}/elements/{ANSWER_ELEMENT_ID}/content"
 
-    async def _one(i: int) -> dict[str, Any]:
+    async def _one(i: int, seq: int | None = None) -> dict[str, Any]:
         hc = d.probe_client or httpx.AsyncClient(timeout=15.0)
         try:
+            body_json: dict[str, Any] = {"content": f"rate probe {i}", "sequence": seq if seq is not None else 2000 + i}
             resp = await hc.put(
                 url,
                 headers={"Authorization": f"Bearer {token}"},
-                json={"content": f"rate probe {i}", "sequence": 2000 + i},
+                json=body_json,
             )
             try:
                 body = resp.json()
@@ -747,19 +794,54 @@ async def sc_ratelimit(d: Driver) -> ScenarioResult:
             if d.probe_client is None:
                 await hc.aclose()
 
+    # A 档：并发齐发（同元素不同 seq）——真实形态是服务端 seq 仲裁（300317），
+    # 不是限频；此档用于诚实记录并发噪声形态。
     results = await asyncio.gather(*[_one(i) for i in range(14)])
     codes: dict[Any, int] = {}
     for x in results:
         codes[x["code"]] = codes.get(x["code"], 0) + 1
-    r.info(f"14 连发 stream_element 分布={ {str(k): v for k, v in codes.items()} }")
-    limited = [x for x in results if x["code"] == 99991400 or x["status"] == 429]
+    r.info(f"A 档 14 连发（并发）分布={ {str(k): v for k, v in codes.items()} }（300317 = seq 仲裁噪声）")
+
+    # B 档：顺序高速（seq 严格递增、零间隔、等响应）——单卡 10 次/秒限的
+    # 正确探针形态；99991400 若触发，捕原始 HTTP 面（状态码/Retry-After/响应体）。
+    seq_hits: list[dict[str, Any]] = []
+    t0 = time.monotonic()
+    seqv = 3000
+    for i in range(25):
+        try:
+            await d.rt.cardkit_stream_element(pc, ANSWER_ELEMENT_ID, f"seq-speed {i}", sequence=seqv)
+            seqv += 1
+        except Exception as exc:  # noqa: BLE001 — 记录非限频错误但不中断
+            code = int(getattr(exc, "code", 0) or 0)
+            if code == 300317:
+                seqv += 1  # 自愈语义：对齐服务端 +1
+                continue
+            seq_hits.append({"i": i, "code": code, "msg": str(exc)[:120]})
+            break
+    elapsed = time.monotonic() - t0
+    r.info(f"B 档 25 连发（顺序高速）耗时 {elapsed:.2f}s ≈ {25 / max(elapsed, 0.01):.1f} 次/s，异常={seq_hits or '无'}")
+
+    # C 档：原始 HTTP 面顺序爆发（绕过 transport 重试，捕 Retry-After）
+    raw_hits: list[dict[str, Any]] = []
+    seqv = 5000
+    for i in range(30):
+        x = await _one(i, seq=seqv)
+        if x["code"] == 0:
+            seqv += 1
+        elif x["code"] == 300317:
+            seqv += 1
+        else:
+            raw_hits.append(x)
+            if len(raw_hits) >= 3:
+                break
+    limited = [x for x in raw_hits if x["code"] == 99991400 or x["status"] == 429]
     if limited:
         sample = limited[0]
         r.check(True, f"限频触发：http={sample['status']} code={sample['code']} retry_headers={sample['headers'] or '无'}")
         r.measure("rate_limit_body", f"http={sample['status']} code={sample['code']} msg={sample['msg'][:80]}")
         r.measure("rate_limit_retry_after", sample["retry_after"] or "HEADER-ABSENT")
     else:
-        r.info("14 连发未触发限频（平台配额余裕）——按『本次未触发』诚实记录")
+        r.info(f"A/B/C 三档均未触发 99991400（本次配额余裕；C 档原始面异常={[(x['status'], x['code']) for x in raw_hits[:3]] or '无'}）——按『本次未触发』诚实记录")
         r.measure("rate_limit_body", "not-triggered")
         r.measure("rate_limit_retry_after", "not-triggered")
     return r
