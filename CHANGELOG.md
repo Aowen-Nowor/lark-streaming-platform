@@ -9,6 +9,27 @@
 
 ## [Unreleased]
 
+- Phase 3：
+  - **protocol 层交付（01-protocol §3/§6/§7 全绑定落地）** — LSEP/1 三绑定，
+    绑定层零语义裁决（信封校验/事件路由/ack 语义全归引擎消费面）：
+    - `messages.py`：共享 wire 素材——帧解析（JSON 根非 object → 错误对象）、
+      错误对象统一形态（HTTP 400 body / WS error 帧 / stdio 行三形同源）、
+      hello 协商产物（hello.ack 含 protocol_v/engine_version/settings 快照）
+    - `stdio.py`：零依赖绑定（纯 asyncio）——stdin 收事件行 / stderr 回回执
+      行 / stdout 保留日志（fd 拓扑由 01-protocol §3 ack 语义锚定）；
+      进程参数等效握手（protocol_v 不支持拒绝启动）；pipe 直连 + 线程泵
+      回退；逐帧并发提交（05-adapters「不得假设 ack 时序」语义）
+    - `server.py`：aiohttp 承载（gateway extra）——`POST /v1/events` 单事件
+      同步 ack、`POST /v1/events:batch` 逐帧回执（非 object 元素槽位错误
+      对象）、`GET /v1/health` 引擎观测同源、`GET /v1/ws` 长连接（hello
+      握手矩阵：首帧违规/版本不支持/载荷非法 → 错误帧+关闭；JSON 垃圾帧
+      → 错误帧不断连；重复 hello → 错误帧保连）；WS 断连时在途帧继续被
+      引擎消费（卡片管线完成性优先于回执通道）
+    - **01-protocol §3.1 增量修订**（绑定实现注记，无破坏）：WS 路径 /v1/ws、
+      stdio fd 拓扑、错误对象形态、batch 元素裁决、回执时序语义
+    - pyproject `[gateway]` extra 引入 aiohttp>=3.9（stdio 零依赖不受影响）
+    - 测试 36 项全绿（wire 素材/stdio 行协议/HTTP 三端点/WS 握手矩阵，
+      HTTP/WS 走 aiohttp TestServer 真 socket）；全仓 292 passed
 - Phase 2：
   - **engine 编排层交付（02-engine 全规格落地）** — 显式回合状态机 + per-chat
     队列 + 竞态守卫（前代 FrameComposer 2306 行隐式旗标的结构化重写）：

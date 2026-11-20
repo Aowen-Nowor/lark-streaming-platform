@@ -13,7 +13,8 @@ dependencies = [
 
 [project.optional-dependencies]
 gateway = [
-    # 形态 B（HTTP/WS 绑定）依赖在 Phase 4 引入，此处预留
+    # 形态 B（HTTP/WS 绑定）：Phase 3 协议层绑定引入（stdio 绑定零依赖）
+    "aiohttp>=3.9",
 ]
 dev = [
     "pytest>=8.0",
