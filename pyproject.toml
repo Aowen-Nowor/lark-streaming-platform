@@ -1,0 +1,28 @@
+[project]
+name = "lark-streaming-platform"
+version = "0.0.1"
+description = "独立的飞书/Lark 流式卡片平台 — 任何 agent 通过统一事件协议接入（LSEP/1）"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Aowen-Nowor" }]
+dependencies = [
+    "lark-oapi>=1.6.4",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+gateway = [
+    # 形态 B（HTTP/WS 绑定）依赖在 Phase 4 引入，此处预留
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["lark_streaming*"]
