@@ -9,6 +9,35 @@
 
 ## [Unreleased]
 
+- Phase 4：
+  - **接入层交付（05-adapters 全规格落地；ADR D8 脚手架定位）** —
+    接入四件事的参考实现 + 网关 shell，核心层零感知（分层红线自检通过）：
+    - `adapters/_legacy_text.py`：前代文本启发式兼容转换器（01-protocol §8
+      参考实现）——classify/progline 语义逐点移植（真实模板解析、300/600
+      双限、通知清单、`(×N)` 去重、裸围栏块归属 terminal、多行思考吸附），
+      永不抛异常红线继承；回归样本固化自前代 v2.0.6/8/15/22/34 事故防线
+    - `adapters/hermes.py`：形态 A 出站钩子翻译面——hermes v0.21.x 官方
+      metadata 契约 → LSEP/1 信封流（expect_edits→turn.start+snapshot、
+      edit 流→snapshot/final、notify→final 或微回合自愈、无标记→deliver、
+      平台通知→notice 且无卡永不建卡）；回合前暂存（pending_max=64 对齐
+      引擎 CREATING 缓冲）、Q9 同文本去重、思考轮显式闭合、逐帧回执聚合
+      为 `DeliveryResult`（§1.4 降级履行：action=native + native_text）
+    - `adapters/openclaw.py`：形态 B bridge 消息映射器——streaming 双模
+      （incremental→delta / 缺省→snapshot，D5）、finalize→final、无标记
+      →deliver、结构化进度模板（tool/thinking/notice/interim）；映射器
+      永不抛异常（坏消息空序列，不击穿 bridge 主循环）
+    - `adapters/_envelope.py`：信封组装器（frame_id 全局唯一、ts/seq）
+      + per-chat 回合注册表（加速路径非权威，引擎守卫始终兜底）
+    - `gateway.py` + `__main__.py`：网关 shell（B = A + server shell）——
+      配置面 env > lsp.yaml > 默认值（§4 设置键双轨冠名/原生名、env 同名
+      覆盖、越界钳制、渲染保留键诚实标注）；stdio/HTTP/WS 绑定编排；
+      SIGINT/SIGTERM → engine.aclose（seal_all_on_shutdown）→ stdio 桥
+      经 stderr 收 lifecycle.event{shutdown} 后转原生
+    - `docs/ADAPTER_SDK.md`：接入清单（四件事总览 / 形态 A·B 上手 /
+      元数据契约映射表 / 降级履行规则 / 事件 payload 速查 / 配置面 /
+      legacy 转换器 / 版本兼容承诺）——05-adapters §5.3 随代码发布项
+    - 测试 110 项全绿（legacy 48 + hermes 28 + openclaw 14 + 双形态
+      真实引擎集成 5 + 网关 shell 15）；全仓 402 passed
 - Phase 3：
   - **protocol 层交付（01-protocol §3/§6/§7 全绑定落地）** — LSEP/1 三绑定，
     绑定层零语义裁决（信封校验/事件路由/ack 语义全归引擎消费面）：

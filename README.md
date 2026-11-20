@@ -7,7 +7,7 @@
 [![version](https://img.shields.io/badge/version-0.0.1-blue)](CHANGELOG.md)
 [![python](https://img.shields.io/badge/python-3.11%2B-informational)](#)
 [![license](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
-[![status](https://img.shields.io/badge/status-Phase%200%20设计阶段-orange)](docs/design/00-overview.md)
+[![status](https://img.shields.io/badge/status-Phase%204%20接入层已交付-green)](docs/design/00-overview.md)
 
 *统一事件协议 · 显式回合状态机 · 零宿主依赖 · 消息永不丢*
 
@@ -32,8 +32,8 @@
 
 - 前代生产验证的全部平台知识（CardKit 怪癖、竞态事故档案、性能守恒）
   **冻结**在 [`docs/design/04-knowledge-freeze.md`](docs/design/04-knowledge-freeze.md)
-- 前代在双跑对照通过后进入维护模式；切换前 hermes 生产继续跑前代插件
-- 版本从 0.0.1 起步：0.0.x = 设计与骨架，0.1.x = 引擎可用，1.0 = 生产切换
+- 前代仓库已终态化：停止更新、只读归档（ADR D9，2027-01-01 转私有）
+- 版本号由用户明示变更（ADR D10）：里程碑与交付批次不自动联动版本号
 
 ## 架构（五层，依赖单向向下）
 
@@ -75,8 +75,9 @@
 |------|------|------|
 | Phase 0 | 设计文档（协议 / 状态机 / 卡片 Schema / 知识冻结 / 接入契约） | **完成** |
 | Phase 1 | 传输层（CardKit REST + 怪癖知识落地）+ 渲染层（Schema + 主题 + 三产物） | **完成** |
-| Phase 2 | 编排层（状态机 + 全部竞态守卫 + 降级） | 待开始 |
-| Phase 4 | 协议层 + 接入方（hermes SDK、openclaw bridge、编解码） | 待开始 |
+| Phase 2 | 编排层（状态机 + 全部竞态守卫 + 降级） | **完成** |
+| Phase 3 | 协议层（LSEP/1 三绑定 stdio / HTTP / WS + hello 握手） | **完成** |
+| Phase 4 | 接入层（hermes 形态 A / openclaw 形态 B / legacy 转换器 / 网关 shell / ADAPTER_SDK） | **完成** |
 | Phase 5 | 测试台架（mock 移植 + 行为验收基线跑通） | 待开始 |
 | Phase 6 | 双跑对照 → 生产切换 | 待开始 |
 
@@ -88,6 +89,26 @@
 - [`docs/design/03-card-schema.md`](docs/design/03-card-schema.md) — 卡片 Schema 与主题 token
 - [`docs/design/04-knowledge-freeze.md`](docs/design/04-knowledge-freeze.md) — 前代知识冻结（怪癖表 / 事故档案 / 验收基线）
 - [`docs/design/05-adapters.md`](docs/design/05-adapters.md) — 接入契约与双形态接入计划
+- [`docs/ADAPTER_SDK.md`](docs/ADAPTER_SDK.md) — **接入清单（四件事 / 双形态上手 / 配置面 / 降级履行）**
+
+## 快速上手
+
+形态 A（Python agent，in-process）：
+
+```python
+from lark_streaming.adapters import HermesAdapter, NativeAction
+# engine + transport 装配见 ADAPTER_SDK §2；hermes 网关出站钩子：
+res = await adapter.send(chat_id, content, metadata)   # 元数据契约翻译面
+if res.action is NativeAction.NATIVE:
+    ...  # 降级履行：原生通道投递 res.native_text（消息永不丢）
+```
+
+形态 B（网关常驻，任意 agent）：
+
+```bash
+FEISHU_APP_ID=… FEISHU_APP_SECRET=… python -m lark_streaming --bind stdio
+# stdin 事件行 / stderr 回执行；HTTP / WS 绑定见 ADAPTER_SDK §3
+```
 
 ## License
 
