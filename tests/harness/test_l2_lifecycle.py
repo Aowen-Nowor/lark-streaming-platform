@@ -2,8 +2,8 @@
 
 与 tests/engine/test_lifecycle.py（L1）的区别：本文件跑 **真实
 FeishuTransport × mock HTTP**——cardkit_create / send_card_by_id /
-stream_element / settings（close_streaming）全链路 wire 在环，验证的
-是「一回合一卡、定稿四步、回合外投递、中止收敛、停机 seal_all」这些
+stream_element / cardkit_update（定稿全量写回，#14）全链路 wire 在环，
+验证的是「一回合一卡、定稿、回合外投递、中止收敛、停机 seal_all」这些
 **可观测的卡片终态**，而非 transport 方法面调用次数。
 
 clarify 窗口竞态归 test_l2_clarify.py（02-engine §2 T_pause 语义）；
@@ -40,9 +40,9 @@ async def test_full_turn_single_card_streamed_and_sealed(make_harness):
     # 最终卡 answer 元素 content == 完整文本（mock 卡 elements 实测终态）
     card = h.last_card()
     assert card.elements[ANSWER_ELEMENT_ID]["content"] == "你好，世界"
-    # close_streaming 已调用（settings_log 有 streaming_mode:false，含摘要）
-    closes = [e for e in card.settings_log if e["streaming_mode"] is False]
-    assert len(closes) == 1 and closes[0]["summary"]
+    # 定稿已落：卡关流式且摘要为终值摘要（#14 定稿改走全量更新，不再有 settings_log）
+    assert card.streaming_mode is False
+    assert card.card_json["config"]["summary"]["content"]
     # 定稿装饰：spinner 已删
     ids = {e.get("element_id") for e in card.card_json["body"]["elements"]}
     assert LOADING_ELEMENT_ID not in ids
@@ -86,8 +86,8 @@ async def test_abort_seals_card_and_late_frames_fall_back(harness):
     a3 = await h.submit("turn.abort", turn=turn, payload={"reason": "用户取消"}, frame="f_abort")
     assert a3.verdict is Verdict.CONSUMED
     card = h.last_card()
-    # 卡收敛：close_streaming（settings_log streaming_mode:false）+ 已缓冲内容落卡
-    assert any(e["streaming_mode"] is False for e in card.settings_log)
+    # 卡收敛：定稿全量写回关流式（#14）+ 已缓冲内容落卡
+    assert card.streaming_mode is False
     assert card.elements[ANSWER_ELEMENT_ID]["content"] == "写到一半"
     # 中止页脚（is_aborted + reason 警示行）
     assert json_contains(card.card_json, "用户取消")
@@ -110,13 +110,12 @@ async def test_shutdown_seals_active_turn_then_fallback(harness):
     turn = "t_sd"
     await h.submit("turn.start", turn=turn)
     await h.submit("answer.delta", turn=turn, payload={"delta": "停机前内容"}, seq=1)
-    n_close = len([e for e in h.last_card().settings_log if e["streaming_mode"] is False])
+    assert h.last_card().streaming_mode is True  # 尚未定稿
     await h.engine.aclose()  # 内含 seal_all_on_shutdown
-    # 先 close+final 再 shutdown：卡终态已落
+    # 先 close+final 再 shutdown：卡终态已落（定稿全量写回关流式，#14）
     card = h.last_card()
+    assert card.streaming_mode is False
     assert card.elements[ANSWER_ELEMENT_ID]["content"] == "停机前内容"
-    closes = [e for e in card.settings_log if e["streaming_mode"] is False]
-    assert len(closes) == n_close + 1
     # shutdown 生命周期通告（01-protocol §4.6 封闭集）
     assert h.lifecycle and h.lifecycle[-1].type == "shutdown"
     assert h.lifecycle[-1].detail == "seal_all_on_shutdown"

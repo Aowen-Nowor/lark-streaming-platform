@@ -24,14 +24,35 @@ from tests.harness.framework import CHAT, FakeClock
 
 
 def _reopen_indexes(log) -> list[int]:
-    """call_log 中 settings streaming_mode:true（重开/续期）的索引."""
+    """call_log 中重开/续期的索引（#14：改走全量更新）.
+
+    settings ``streaming_mode:true``（旧通道，mock 仍保留）或全量更新
+    ``streaming_mode:true`` 均计为重开。注意：面板 flush 也是流式全量
+    更新，使用本 helper 的测试在相关窗口内无面板 flush，故不致误判。
+    """
     out = []
     for i, c in enumerate(log):
         if c.op == "settings":
             config = (json.loads(c.body["settings"]) or {}).get("config") or {}
             if config.get("streaming_mode") is True:
                 out.append(i)
+        elif c.op == "update":
+            card = _parse_update_card(c.body)
+            if card is not None and (card.get("config") or {}).get("streaming_mode") is True:
+                out.append(i)
     return out
+
+
+def _parse_update_card(body: dict) -> dict | None:
+    """update 请求体里的卡 JSON（card.data 为 JSON 字符串）."""
+    data = (body.get("card") or {}).get("data")
+    if isinstance(data, str):
+        try:
+            parsed = json.loads(data)
+        except ValueError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return data if isinstance(data, dict) else None
 
 
 # ── 建卡窗口并发帧（Q3 守卫回归；02-engine §3.2）──────────────────────────
@@ -92,8 +113,8 @@ async def test_new_turn_supersedes_old_streaming_card(harness):
     assert ack.verdict is Verdict.CONSUMED
     new_card = h.last_card()
     assert new_card.card_id != old_card.card_id
-    # 旧卡被 close_streaming（superseded 真落定）
-    assert any(e["streaming_mode"] is False for e in old_card.settings_log)
+    # 旧卡被定稿全量写回关流式（superseded 真落定，#14）
+    assert old_card.streaming_mode is False
     assert h.server.count("create") == 2
     box = h.engine._chats[CHAT]
     assert box.turn is not None and box.turn.turn_id == "t_new"
@@ -116,7 +137,7 @@ async def test_proactive_session_renew_before_200850(make_harness):
     clock.advance(61)  # 会话龄 61s ≥ 60s
     ack = await h.submit("answer.delta", turn="t_renew", payload={"delta": "续期后帧"}, seq=1)
     assert ack.verdict is Verdict.CONSUMED
-    # 该 delta 的 stream_element 前出现 reopen_streaming（settings streaming_mode:true）
+    # 该 delta 的 stream_element 前出现 reopen（全量更新 streaming_mode:true，#14）
     log = h.server.call_log
     reopens = _reopen_indexes(log)
     assert reopens, "主动续期未发生"

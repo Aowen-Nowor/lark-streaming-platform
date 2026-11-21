@@ -168,31 +168,46 @@ class TestStreamElement:
 
 class TestSettings:
     async def test_close_streaming_wire(self):
+        """#14：关流式改走全量更新（PUT /cards/{id}），不再调 settings 端点."""
+        sealed = {
+            "schema": "2.0",
+            "config": {
+                "streaming_mode": False,
+                "summary": {"content": "定稿摘要", "i18n_content": {"zh_cn": "定稿摘要", "en_us": "定稿摘要"}},
+            },
+            "body": {"elements": []},
+        }
         route = Route(
-            lambda m, p: m == "PUT" and p.endswith("/cardkit/v1/cards/c_9/settings"),
+            lambda m, p: m == "PUT" and p.endswith("/cardkit/v1/cards/c_9"),
             lambda r: json_response(api_ok()),
         )
         tr = make_transport(route)
         try:
-            await tr.cardkit_close_streaming("c_9", sequence=77, summary="定稿摘要")
+            await tr.cardkit_close_streaming("c_9", sealed, sequence=77)
             body = body_of(route.calls[0])
-            settings = json.loads(body["settings"])
             assert body["sequence"] == 77
-            assert settings["config"]["streaming_mode"] is False
-            assert settings["config"]["summary"]["content"] == "定稿摘要"
+            card = json.loads(body["card"]["data"])
+            assert card["config"]["streaming_mode"] is False
+            assert card["config"]["summary"]["content"] == "定稿摘要"
         finally:
             await tr.aclose()
 
     async def test_reopen_streaming_wire(self):
+        """#14：重开会话改走全量更新（PUT /cards/{id}），不再调 settings 端点."""
+        streaming = {
+            "schema": "2.0",
+            "config": {"streaming_mode": True},
+            "body": {"elements": []},
+        }
         route = Route(
-            lambda m, p: m == "PUT" and p.endswith("/cardkit/v1/cards/c_9/settings"),
+            lambda m, p: m == "PUT" and p.endswith("/cardkit/v1/cards/c_9"),
             lambda r: json_response(api_ok()),
         )
         tr = make_transport(route)
         try:
-            await tr.cardkit_reopen_streaming("c_9", sequence=80)
-            settings = json.loads(body_of(route.calls[0])["settings"])
-            assert settings["config"]["streaming_mode"] is True
+            await tr.cardkit_reopen_streaming("c_9", streaming, sequence=80)
+            card = json.loads(body_of(route.calls[0])["card"]["data"])
+            assert card["config"]["streaming_mode"] is True
         finally:
             await tr.aclose()
 

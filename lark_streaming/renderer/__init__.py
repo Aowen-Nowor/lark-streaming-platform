@@ -54,6 +54,7 @@ from .streaming import (
     panel_reseal_actions,
     render_full_card,
     render_initial_card,
+    render_sealed_card,
     trim_to_budget,
 )
 from .theme import (
@@ -84,7 +85,7 @@ __all__ = [
     "strip_invalid_image_keys", "MarkdownCache",
     "MAX_CARD_TABLES", "MAX_STATIC_TABLES", "MAX_CHUNK_CHARS",
     # streaming
-    "render_initial_card", "render_full_card", "trim_to_budget", "TrimReport",
+    "render_initial_card", "render_full_card", "render_sealed_card", "trim_to_budget", "TrimReport",
     "final_answer_content", "footer_summary", "footer_batch_actions",
     "panel_reseal_actions", "measure_card_bytes",
     # static

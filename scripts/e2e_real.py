@@ -8,7 +8,7 @@ raw REST 传输），不是 mock，不是适配层模拟。同时承担 04-knowl
 场景一览：
     connect  — token 获取 + 原生文本直发 + deliver 静态卡（连通性锚点）
     plain    — 纯文本直发（原生兜底通道）
-    answer   — 流式回合：建卡 → 打字机流式 → 两步定稿
+    answer   — 流式回合：建卡 → 打字机流式 → 定稿全量写回
     progress — 面板通道：tool.start/end + thinking 轮 + interim + notice
     full     — 仿真实回合全时序（面板 + 流式 + 页脚 stats 全字段）
     burst    — 建卡窗口并发帧（Q3 幂等屏障真火回归：恰一张卡）
@@ -73,7 +73,9 @@ from lark_streaming.renderer import (  # noqa: E402
     DEFAULT_THEME,
     RenderState,
     measure_card_bytes,
+    render_full_card,
     render_initial_card,
+    render_sealed_card,
 )
 from lark_streaming.transport import FeishuTransport  # noqa: E402
 
@@ -193,16 +195,23 @@ class RecordingTransport:
         return await self._inner.cardkit_batch_update(card_id, actions, sequence=sequence)
 
     async def cardkit_close_streaming(
-        self, card_id: str, *, sequence: int = 0, summary: str = "",
+        self, card_id: str, card: dict[str, Any], *, sequence: int = 0,
     ) -> None:
+        # #14：定稿改走全量更新，调用方传入已定稿的完整卡 JSON；底层为一次
+        # cardkit_update（不在此处重复计数，close_streaming 即定稿信号）。
         self._note("cardkit_close_streaming", f"seq={sequence}")
         return await self._inner.cardkit_close_streaming(
-            card_id, sequence=sequence, summary=summary,
+            card_id, card, sequence=sequence,
         )
 
-    async def cardkit_reopen_streaming(self, card_id: str, *, sequence: int = 0) -> None:
+    async def cardkit_reopen_streaming(
+        self, card_id: str, card: dict[str, Any], *, sequence: int = 0,
+    ) -> None:
+        # #14：重开会话改走全量更新，调用方传入当前流式卡。
         self._note("cardkit_reopen_streaming", f"seq={sequence}")
-        return await self._inner.cardkit_reopen_streaming(card_id, sequence=sequence)
+        return await self._inner.cardkit_reopen_streaming(
+            card_id, card, sequence=sequence,
+        )
 
     def __getattr__(self, name: str) -> Any:  # aclose / _inner / _token 等 passthrough
         return getattr(self._inner, name)
@@ -330,6 +339,24 @@ async def settle(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
 
+async def wait_for_close(
+    transport: RecordingTransport, before: int, *,
+    timeout: float = 10.0, interval: float = 0.5,
+) -> int:
+    """轮询等待定稿调用（#15）.
+
+    L3 真实 API 单次调用约 1s，固定 settle(1.6) 不够 pause_expire 的
+    定稿（timer 1.2s + 定稿全量更新）完成。轮询 ``cardkit_close_streaming``
+    计数直至超过 ``before`` 或超时，返回当前计数。
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        count = transport.counts.get("cardkit_close_streaming", 0)
+        if count > before or time.monotonic() >= deadline:
+            return count
+        await asyncio.sleep(interval)
+
+
 # ── 探针共用：绕过本地预算预检的裸 create ─────────────────────────────────
 
 
@@ -410,10 +437,14 @@ async def sc_answer(d: Driver) -> ScenarioResult:
         },
     )
     r.check(_ok(fin), f"answer.final verdict={fin.verdict.value} detail={fin.detail}")
-    await settle(1.6)  # 澄清窗口 1.2s 到期 → pause_expire 真落定
+    # 澄清窗口 1.2s 到期 → pause_expire 真落定（#15：轮询等待，L3 单次
+    # 调用约 1s，固定 settle(1.6) 不够定稿全量更新完成）
+    closes = await wait_for_close(
+        d.rt, d.rt.counts.get("cardkit_close_streaming", 0),
+    )
     r.check(
-        d.rt.counts.get("cardkit_close_streaming", 0) == 1,
-        "窗口到期自动落定（close_streaming 已执行，两步定稿第一步）",
+        closes == 1,
+        "窗口到期自动落定（close_streaming 已执行，定稿全量写回）",
     )
     r.info(f"调用序列={d.rt.events}")
     if d.message_ids:
@@ -490,7 +521,7 @@ async def sc_full(d: Driver) -> ScenarioResult:
     )
     r.check(_ok(fin), f"answer.final verdict={fin.verdict.value}")
     await settle(1.6)  # 窗口到期真落定
-    r.info(f"close_streaming={d.rt.counts.get('cardkit_close_streaming', 0)}（两步定稿第一步）")
+    r.info(f"close_streaming={d.rt.counts.get('cardkit_close_streaming', 0)}（定稿全量写回，#14）")
     return r
 
 
@@ -544,11 +575,11 @@ async def sc_clarify(d: Driver) -> ScenarioResult:
     r.check(_ok(fin), f"resume 后第二次 final verdict={fin.verdict.value} detail={fin.detail}")
     # 语义定案（guards.py）：clarify_window_sec>0 时 STREAMING 中的每次 final
     # 都进窗口；无 clarify 命中则 1.2s 后 pause_expire 真落定——此处验证该
-    # 自动落定链路真实可达。
+    # 自动落定链路真实可达（#15：轮询等待）。
     close_before = d.rt.counts.get("cardkit_close_streaming", 0)
-    await settle(1.7)
+    closes = await wait_for_close(d.rt, close_before)
     r.check(
-        d.rt.counts.get("cardkit_close_streaming", 0) > close_before,
+        closes > close_before,
         "窗口到期 pause_expire 自动落定（close_streaming 增量出现）",
     )
     r.measure("clarify", "MANUAL-R4: 回调授权码集需平台回调接线实测（本脚本投递真实可点卡）")
@@ -625,11 +656,13 @@ async def sc_renew(d: Driver, *, long_mode: bool) -> ScenarioResult:
     r.check(_ok(a0), "turn.start 建卡")
     await d.delta(turn, "续期探针：先落一帧。", seq=1)
     await settle(PULSE)
-    # 官方恢复动作直探：独立探针卡 reopen（200850 官方解法；跳号允许）
+    # 官方恢复动作直探：独立探针卡 reopen（#14：改走全量更新，传入流式卡）
     t0 = time.monotonic()
     try:
         pc = await d.rt.cardkit_create(render_initial_card(RenderState(), DEFAULT_THEME))
-        await d.rt.cardkit_reopen_streaming(pc, sequence=99)
+        await d.rt.cardkit_reopen_streaming(
+            pc, render_full_card(RenderState(), DEFAULT_THEME), sequence=99,
+        )
         elapsed = time.monotonic() - t0
         r.check(True, f"reopen 官方动作可达（独立探针卡，{elapsed:.2f}s）")
         r.measure("reopen_probe_sec", f"{elapsed:.2f}")
@@ -872,11 +905,15 @@ async def sc_seqconflict(d: Driver) -> ScenarioResult:
     except Exception as exc:  # noqa: BLE001
         r.measure("seq_far_jump", f"rejected:{getattr(exc, 'code', 0)}")
         r.info(f"跳号被拒 code={getattr(exc, 'code', 0)}（与冻结知识不符，需复核）")
-    # 最小重开间隔：close → 立即 reopen → stream
+    # 最小重开间隔：close → 立即 reopen → stream（#14：两者均改走全量更新）
     t0 = time.monotonic()
     try:
-        await d.rt.cardkit_close_streaming(pc, sequence=1001)
-        await d.rt.cardkit_reopen_streaming(pc, sequence=1002)
+        await d.rt.cardkit_close_streaming(
+            pc, render_sealed_card(RenderState(), DEFAULT_THEME), sequence=1001,
+        )
+        await d.rt.cardkit_reopen_streaming(
+            pc, render_full_card(RenderState(), DEFAULT_THEME), sequence=1002,
+        )
         await stream(1003, "after-close-reopen")
         elapsed = time.monotonic() - t0
         r.check(True, f"close→reopen→stream 最小链 {elapsed:.2f}s 可达")

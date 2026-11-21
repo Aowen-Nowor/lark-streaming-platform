@@ -107,7 +107,7 @@ async def test_stream_timeout_reopens_session(transport):
         ack = await engine.submit(env("answer.delta", turn="t_s2", payload={"delta": "x"}, seq=1))
         assert ack.verdict is Verdict.CONSUMED
         reopens = transport.calls_of("cardkit_reopen_streaming")
-        assert len(reopens) == 1  # 官方恢复动作 settings streaming_mode:true
+        assert len(reopens) == 1  # 官方恢复动作（#14：改走全量更新，传入流式卡）
         streams = transport.calls_of("cardkit_stream_element")
         assert streams[-1]["sequence"] == 3  # 预递增1 + reopen消耗1 + 重发
         assert st.stream_session_at >= clock()  # 重开成功刷新续期基线

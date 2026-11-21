@@ -8,13 +8,17 @@
 | STREAMING 面板合并窗口到期 | :func:`render_full_card` | cardkit_update 全量 |
 | STREAMING answer 帧 | :attr:`ANSWER_ELEMENT_ID` + :meth:`RenderState.answer_text` | cardkit_stream_element（原文直发） |
 | SEALING 第一步 | :func:`final_answer_content` | cardkit_stream_element 终值 patch（原文） |
-| SEALING 第二步 | :func:`footer_batch_actions` | cardkit_batch_update（页脚 + 删 spinner） |
-| SEALING 第三步 | :func:`panel_reseal_actions` | cardkit_batch_update（面板收口重建） |
-| SEALING 第四步 | （引擎直调） | cardkit_close_streaming |
+| SEALING 第二~四步 | :func:`render_sealed_card` | cardkit_update 全量写回定稿卡（#14） |
 
-**为什么定稿不走全量重建**（前代 finalize.py 模块 docstring，生产铁律）：
-cardkit_update 全量替换会把 answer 元素重置为模板内容——已经流出去了的
-answer 会被覆盖回去。定稿四步全部走局部通道。
+**定稿改走全量重建**（#14）：原四步里的局部通道 `cardkit_batch_update`
+与 `cardkit_close_streaming`（settings）所调端点 `PUT .../batch_update` /
+`PUT .../settings` 经 L3 实测返回 HTTP 404，定稿无法落地。现改由
+:func:`render_sealed_card` 一次全量写回（`cardkit_update`，已验证可用）。
+前代“定稿不走全量重建”的铁律所防的是全量更新把已流 answer 覆盖回截断版；
+此处安全是因为渲染输入的 ``answer_text`` 就是终值本身（且
+:func:`render_sealed_card` 不裁剪 answer 终值），全量写回与终值 patch
+内容一致。`footer_batch_actions` / `panel_reseal_actions` 仍保留（局部
+通道的载荷计算），但引擎定稿不再调用它们。
 
 **字节预算（03-card-schema §6）**：全量卡（initial/full）渲染前经
 :func:`trim_to_budget` 按「interim → thinking 历史轮（保留当前轮）→
@@ -57,6 +61,7 @@ __all__ = [
     "trim_to_budget",
     "render_initial_card",
     "render_full_card",
+    "render_sealed_card",
     "final_answer_content",
     "footer_batch_actions",
     "panel_reseal_actions",
@@ -69,6 +74,12 @@ def _processing_summary(theme: Theme) -> dict:
     return {"content": en, "i18n_content": {"zh_cn": zh, "en_us": en}}
 
 
+def _final_summary(state: RenderState, theme: Theme) -> dict:
+    """定稿摘要（写入定稿卡 ``config.summary``，#14）."""
+    text = footer_summary(state, theme)
+    return {"content": text, "i18n_content": {"zh_cn": text, "en_us": text}}
+
+
 def _assemble_streaming_card(
     state: RenderState,
     theme: Theme,
@@ -76,6 +87,7 @@ def _assemble_streaming_card(
     turn_state: str,
     print_strategy: str = "delay",
     print_step: int = 4,
+    sealed: bool = False,
 ) -> dict[str, Any]:
     """流式卡骨架组装（前代 build_streaming_card_v2 结构化重写）.
 
@@ -83,6 +95,10 @@ def _assemble_streaming_card(
     面板——纯 answer 回合无空壳 "agent loop" 折叠面板；首个面板行到达
     后由 cardkit_update 全量补插（s172 真飞书探针实证：更新时新增元素
     合法，含流式卡建卡时未声明的元素）。
+
+    sealed=True 时产出定稿形态（#14）：``streaming_mode`` 为 False、
+    无 loading spinner、页脚直接拼在 answer 之后、面板按 finalized 态
+    渲染、摘要为终值摘要。供 :func:`render_sealed_card` 使用。
     """
     elements: list[dict] = []
 
@@ -97,12 +113,18 @@ def _assemble_streaming_card(
     # answer 元素骨架期无条件存在（空 content 占位）——页脚 insert_before
     # 锚点不受影响（前代 finalize docstring 语义）；流式通道按此 id 打字。
     elements.append(build_answer_element(state.answer_text or "", theme))
-    elements.append(build_loading_element())
+    if sealed:
+        # 定稿形态：无 loading spinner；页脚直接拼在 answer 之后。
+        if state.footer is not None:
+            elements.extend(build_footer_elements(state.footer, theme))
+    else:
+        elements.append(build_loading_element())
 
+    summary = _final_summary(state, theme) if sealed else _processing_summary(theme)
     card: dict[str, Any] = {
         "schema": "2.0",
         "config": {
-            "streaming_mode": True,
+            "streaming_mode": not sealed,
             "streaming_config": {
                 "print_frequency_ms": {"default": 70},
                 "print_step": {"default": print_step},
@@ -110,7 +132,7 @@ def _assemble_streaming_card(
             },
             **theme.style_config(),
             "locales": LOCALES,
-            "summary": _processing_summary(theme),
+            "summary": summary,
         },
         "body": {"elements": elements},
     }
@@ -155,7 +177,30 @@ def render_full_card(
     )
 
 
-# ── SEALING 产物（四步定稿的局部通道载荷）────────────────────────────────
+def render_sealed_card(
+    state: RenderState,
+    theme: Theme,
+    *,
+    print_strategy: str = "delay",
+    print_step: int = 4,
+) -> dict[str, Any]:
+    """SEALING 定稿全量产物（#14：settings / batch_update 端点 404 后改走全量更新）.
+
+    与 :func:`render_full_card` 的区别：``streaming_mode`` 为 False、
+    无 loading spinner、面板按 finalized 态渲染、页脚直接拼入、摘要为
+    终值摘要。answer 终值不经 :func:`trim_to_budget` 裁剪——定稿前已由
+    stream_element 终值 patch 全量送达，全量写回须与之一致，否则会把
+    已流内容覆盖回截断版（前代“定稿不走全量重建”的铁律所防的正是此事；
+    此处安全是因为渲染输入的 answer_text 就是终值本身）。字节超限由
+    传输层 ``assert_card_size`` 拦截（CardSizeExceeded → 引擎降级红线）。
+    """
+    return _assemble_streaming_card(
+        state, theme, turn_state="finalized", sealed=True,
+        print_strategy=print_strategy, print_step=print_step,
+    )
+
+
+# ── SEALING 产物（定稿的局部通道载荷；引擎定稿已改走全量写回，#14）────
 
 
 def final_answer_content(state: RenderState) -> str:
@@ -170,7 +215,7 @@ def final_answer_content(state: RenderState) -> str:
 
 
 def footer_summary(state: RenderState, theme: Theme) -> str:
-    """会话摘要（cardkit_close_streaming summary 参数；前代 _summary_of 语义）."""
+    """会话摘要（写入定稿卡 ``config.summary``；前代 _summary_of 语义）."""
     text = (state.answer_text or "").strip()
     if not text:
         en, zh = theme.text("status_completed")

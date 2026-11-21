@@ -238,8 +238,8 @@ class MockFeishuREST:
         self.cards[card_id].strict_sequence = enabled
 
     def expire_streaming(self, card_id: str) -> None:
-        """一次性武装 200850（Q2）：下次 stream_element 撞线；settings
-        ``streaming_mode:true``（官方恢复动作）后解除并恢复."""
+        """一次性武装 200850（Q2）：下次 stream_element 撞线；重开会话
+        （settings ``streaming_mode:true`` 或流式全量更新，#14）后解除并恢复."""
         self.cards[card_id].expired = True
 
     def rate_limit_card(self, card_id: str, times: int = 1) -> None:
@@ -409,6 +409,10 @@ class MockFeishuREST:
             config = card.get("config") or {}
             if "streaming_mode" in config:
                 state.streaming_mode = bool(config["streaming_mode"])
+                if config["streaming_mode"] is True and state.expired:
+                    # #14：重开会话改走全量更新——流式全量更新亦解除 200850 武装
+                    # （与 settings streaming_mode:true 同为官方恢复动作）
+                    state.expired = False
             self._advance_seq(state, body.get("sequence"))
             return self._ok()
 

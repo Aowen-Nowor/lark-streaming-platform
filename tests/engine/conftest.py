@@ -140,15 +140,22 @@ class FakeTransport:
         )
 
     async def cardkit_close_streaming(
-        self, card_id: str, *, sequence: int = 0, summary: str = "",
+        self, card_id: str, card: dict[str, Any], *, sequence: int = 0,
     ) -> None:
+        # #14：定稿改走全量更新，调用方传入已定稿的完整卡 JSON。
         await self._call(
             "cardkit_close_streaming",
-            card_id=card_id, sequence=sequence, summary=summary,
+            card_id=card_id, card=card, sequence=sequence,
         )
 
-    async def cardkit_reopen_streaming(self, card_id: str, *, sequence: int = 0) -> None:
-        await self._call("cardkit_reopen_streaming", card_id=card_id, sequence=sequence)
+    async def cardkit_reopen_streaming(
+        self, card_id: str, card: dict[str, Any], *, sequence: int = 0,
+    ) -> None:
+        # #14：重开会话改走全量更新，调用方传入当前流式卡。
+        await self._call(
+            "cardkit_reopen_streaming",
+            card_id=card_id, card=card, sequence=sequence,
+        )
 
     async def send_card_to_chat(self, chat_id: str, card: dict[str, Any]) -> str:
         await self._call("send_card_to_chat", chat_id=chat_id, card=card)

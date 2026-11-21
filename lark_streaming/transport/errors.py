@@ -167,7 +167,10 @@ def is_rate_limit_error(e: BaseException) -> bool:
 # ── 响应解析（raw REST 通道）───────────────────────────────────────────
 
 
-def parse_api_response(payload: Any, operation: str, log_id: str = "") -> Any:
+def parse_api_response(
+    payload: Any, operation: str, log_id: str = "",
+    *, status: int | None = None, body_snippet: str = "",
+) -> Any:
     """解析飞书 OpenAPI JSON 响应；code != 0 抛 FeishuAPIError.
 
     飞书约定：HTTP 200 承载业务码（code=0 成功）；HTTP 4xx/5xx 时 body
@@ -176,12 +179,21 @@ def parse_api_response(payload: Any, operation: str, log_id: str = "") -> Any:
     audit #9-L2：``code`` 缺失不再默认当成功（代理错误页恰好是 JSON dict
     时以「missing message_id」误导排障）→ 显式错误；``code`` 非整数不再
     裸抛 ValueError（绕过错误分类）→ 包装为 FeishuAPIError(code=0)。
+
+    #14：非 JSON / 缺 code 时直接报 HTTP 状态与 body 摘要，不再猜
+    ``proxy/gateway page``——L3 实测 settings/batch_update 端点返回的是
+    飞书侧 HTTP 404 纯文本页，猜代理会把排障引向错误方向。
     """
     if not isinstance(payload, dict):
-        raise FeishuAPIError(f"{operation}: non-dict response payload", 0, log_id)
+        raise FeishuAPIError(
+            f"{operation}: non-dict response payload"
+            + _http_hint(status, body_snippet),
+            0, log_id,
+        )
     if "code" not in payload:
         raise FeishuAPIError(
-            f"{operation}: response missing code field (proxy/gateway page?)",
+            f"{operation}: response missing code field"
+            + _http_hint(status, body_snippet),
             0, log_id,
         )
     raw_code = payload["code"]
@@ -190,7 +202,8 @@ def parse_api_response(payload: Any, operation: str, log_id: str = "") -> Any:
     except (TypeError, ValueError):
         raise FeishuAPIError(
             f"{operation}: malformed code {str(raw_code)[:32]}, "
-            f"msg={str(payload.get('msg', ''))[:120]}",
+            f"msg={str(payload.get('msg', ''))[:120]}"
+            + _http_hint(status, body_snippet),
             0, log_id,
         ) from None
     if code == 0:
@@ -199,6 +212,16 @@ def parse_api_response(payload: Any, operation: str, log_id: str = "") -> Any:
     raise FeishuAPIError(
         f"{operation}: code={code}, msg={msg}", code, log_id=log_id
     )
+
+
+def _http_hint(status: int | None, body_snippet: str) -> str:
+    """HTTP 状态与 body 摘要后缀（#14：非 JSON 响应排障用）."""
+    parts: list[str] = []
+    if status is not None:
+        parts.append(f"HTTP {status}")
+    if body_snippet:
+        parts.append(f"body: {body_snippet[:200]!r}")
+    return f" ({'; '.join(parts)})" if parts else ""
 
 
 __all__ = [

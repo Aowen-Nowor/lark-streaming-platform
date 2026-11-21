@@ -47,9 +47,9 @@ async def test_clarify_window_hit_pause_and_resume_same_card(make_harness):
     wait_text = DEFAULT_THEME.text("clarify_wait")[0]
     assert any(r.text == wait_text for r in st.render.panel_rows)  # 暂停行在渲染态
     turn_card = h.server.cards[st.card_id]
-    # 原卡保流式：零 close_streaming，settings_log 无 streaming_mode:false
+    # 原卡保流式：零 close_streaming，卡仍 streaming_mode=True（#14 定稿
+    # 改走全量更新后不再有 settings_log 记录，以卡态为准）
     assert turn_card.streaming_mode is True
-    assert not any(e["streaming_mode"] is False for e in turn_card.settings_log)
     # 暂停行 flush 被 _flush_panel 的 STREAMING 相位守卫跳过（PAUSED 期零
     # update——实际语义，见报告注记；行只落引擎渲染态）
     assert h.server.count("update") == 0
@@ -73,7 +73,7 @@ async def test_clarify_window_hit_pause_and_resume_same_card(make_harness):
     box = h.engine._chats[CHAT]
     assert len(box.sealed) == 1 and box.turn is None
     assert turn_card.elements[ANSWER_ELEMENT_ID]["content"] == "前段定稿"
-    assert any(e["streaming_mode"] is False for e in turn_card.settings_log)
+    assert turn_card.streaming_mode is False  # #14 定稿全量写回后关流式
 
 
 async def test_clarify_window_timeout_seals_for_real(make_harness):
@@ -88,7 +88,7 @@ async def test_clarify_window_timeout_seals_for_real(make_harness):
     assert len(box.sealed) == 1 and box.turn is None
     card = h.last_card()
     assert card.elements[ANSWER_ELEMENT_ID]["content"] == "等待落定"
-    assert any(e["streaming_mode"] is False for e in card.settings_log)
+    assert card.streaming_mode is False  # #14 定稿全量写回后关流式
     # turn 已终结 → clarify.request fallback（clarify_without_stream）
     a = await h.submit("clarify.request", turn=turn, payload={
         "form": {"kind": "input", "question": "q"},

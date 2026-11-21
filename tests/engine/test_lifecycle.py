@@ -1,4 +1,4 @@
-"""回合生命周期 E2E（L1 mock）：turn.start → 流式 → 定稿四步 → SEALED.
+"""回合生命周期 E2E（L1 mock）：turn.start → 流式 → 定稿 → SEALED.
 
 本文件断言「直落定」路径（clarify_window_sec=0）；窗口竞态见
 test_clarify.py（02-engine §2 T_pause 语义）。
@@ -83,22 +83,30 @@ async def test_tool_start_flushes_immediately_tool_end_debounced(transport):
         await engine.aclose()
 
 
-async def test_final_seals_with_four_step_pipeline(transport):
+async def test_final_seals_with_full_update(transport):
+    """定稿（#14）：终值 patch + 一次全量写回（关流式 + 页脚 + 面板收口）.
+
+    settings / batch_update 端点 404 后，定稿不再走局部通道；一次
+    cardkit_close_streaming（底层 cardkit_update）写回已定稿的完整卡。
+    """
     engine, events, clock, *_, ack4 = await _happy_stream(transport)
     try:
         assert ack4.verdict is Verdict.CONSUMED
         box = engine._chats[CHAT]
         st = box.sealed[-1]
         assert st.phase is TurnPhase.SEALED and box.turn is None
-        # 定稿管道：终值 patch + 页脚插入 + spinner 删除 + 关流式
+        # 定稿管道：终值 patch + 一次全量写回（无 batch_update）
         streams = transport.calls_of("cardkit_stream_element")
         assert streams[-1]["content"] == "你好，世界"
-        batch = transport.calls_of("cardkit_batch_update")
-        assert len(batch) == 2  # footer-add 与 spinner-del 分两次调用
-        assert batch[0]["actions"][0]["action"] == "add_elements"
-        assert batch[1]["actions"][0]["action"] == "delete_elements"
+        assert len(transport.calls_of("cardkit_batch_update")) == 0
         closes = transport.calls_of("cardkit_close_streaming")
-        assert len(closes) == 1 and closes[0]["summary"]
+        assert len(closes) == 1
+        sealed = closes[0]["card"]
+        assert sealed["config"]["streaming_mode"] is False
+        assert sealed["config"]["summary"]["content"]
+        elements = sealed["body"]["elements"]
+        assert any(e.get("tag") == "hr" for e in elements)  # 页脚已拼入
+        assert not any(e.get("element_id") == "loading_icon" for e in elements)
     finally:
         await engine.aclose()
 

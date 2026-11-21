@@ -96,10 +96,17 @@ class FeishuTransport:
                     method, url, json=json_body, params=params, headers=headers,
                 )
                 log_id = resp.headers.get(_LOGID_HEADER, "")
+                body_snippet = ""
                 try:
                     payload = resp.json()
                 except ValueError:
+                    # 非 JSON 体（如 404 纯文本页）：留 body 摘要给排障（#14），
+                    # 不再只凭空 dict 让 parse_api_response 猜原因。
                     payload = {}
+                    try:
+                        body_snippet = resp.text[:200]
+                    except Exception:  # noqa: BLE001 — 文本读取失败也不影响主流程
+                        body_snippet = ""
                 if resp.status_code in (401, 403):
                     await self._token.invalidate()
                     last_error = FeishuAPIError(
@@ -111,7 +118,10 @@ class FeishuTransport:
                     raise last_error
                 # HTTP 4xx/5xx 但 body 有业务码 → 交给业务裁决（飞书惯例：
                 # 99991400 等限频以 HTTP 400 + code 承载）
-                return parse_api_response(payload, operation, log_id)
+                return parse_api_response(
+                    payload, operation, log_id,
+                    status=resp.status_code, body_snippet=body_snippet,
+                )
             except FeishuAPIError as e:
                 if e.code in _TOKEN_INVALID_CODES:
                     await self._token.invalidate()
@@ -284,6 +294,10 @@ class FeishuTransport:
 
         红线（前代语义）：纯 add_elements 非幂等——网络错误时首次请求可能
         已落卡，自动重放会插重复元素；此类调用绕过自动重试直发。
+
+        注意（#14）：该端点（PUT .../batch_update）经 L3 实测返回 HTTP 404，
+        引擎定稿已不再调用本方法（改走 cardkit_update 全量写回）。本方法
+        保留作传输层接口，调用方须自行确认端点可用性。
         """
         has_blind_add = any(
             isinstance(a, dict) and a.get("action") == "add_elements" for a in actions
@@ -317,33 +331,42 @@ class FeishuTransport:
         await retry_transient(op, _do)
 
     async def cardkit_close_streaming(
-        self, card_id: str, *, sequence: int = 0, summary: str = "",
+        self, card_id: str, card: dict[str, Any], *, sequence: int = 0,
     ) -> None:
-        """关闭流式模式（可选摘要；两步定稿第一步）."""
-        settings: dict[str, Any] = {"config": {"streaming_mode": False}}
-        if summary:
-            truncated = summary[:120]
-            settings["config"]["summary"] = {
-                "content": truncated,
-                "i18n_content": {"zh_cn": truncated, "en_us": truncated},
-            }
-        await self._cardkit_settings(card_id, settings, sequence=sequence, op="cardkit_close_streaming")
+        """关闭流式模式（#14：改走全量更新）.
 
-    async def cardkit_reopen_streaming(self, card_id: str, *, sequence: int = 0) -> None:
-        """重开流式会话（200850 官方恢复动作：streaming_mode:true；跳号允许）.
-
-        双用途：事后自愈（seq.py 200850 分支）+ 主动续期（会话龄逼近
-        ~10min 寿命前调用，02-engine §2 T_renew）。
+        settings 端点（PUT .../settings）经 L3 实测返回 HTTP 404，无法再用。
+        调用方传入已定稿的完整卡 JSON（``streaming_mode: false``，见
+        ``renderer.render_sealed_card``），此处经 :meth:`cardkit_update`
+        一次写回，一步完成关流式 + 写页脚 + 面板收口。摘要已在卡的
+        ``config.summary`` 里，不再单独传。
         """
-        await self._cardkit_settings(
-            card_id, {"config": {"streaming_mode": True}},
-            sequence=sequence, op="cardkit_reopen_streaming",
-        )
+        await self.cardkit_update(card_id, card, sequence=sequence)
+
+    async def cardkit_reopen_streaming(
+        self, card_id: str, card: dict[str, Any], *, sequence: int = 0,
+    ) -> None:
+        """重开流式会话（#14：改走全量更新）.
+
+        settings 端点（PUT .../settings）经 L3 实测返回 HTTP 404，无法再用。
+        调用方传入当前流式卡（``streaming_mode: true``，见
+        ``renderer.render_full_card``），此处经 :meth:`cardkit_update`
+        一次写回重开会话。双用途：事后自愈（seq.py 200850 分支）+ 主动
+        续期（会话龄逼近 ~10min 寿命前调用，02-engine §2 T_renew）。
+        全量更新是否真能续期已过期会话（200850）待 L3 seqconflict
+        场景实测验证。
+        """
+        await self.cardkit_update(card_id, card, sequence=sequence)
 
     async def cardkit_update_summary(
         self, card_id: str, summary: str, *, sequence: int = 0,
     ) -> None:
-        """更新会话摘要而不关闭流式（会话列表预览文案）."""
+        """更新会话摘要而不关闭流式（会话列表预览文案）.
+
+        注意（#14）：本方法仍走 settings 端点（PUT .../settings），该端点
+        经 L3 实测返回 HTTP 404；目前无引擎调用方，仅保留作传输层接口。
+        如需恢复摘要更新，应随卡的全量更新一并写入 config.summary。
+        """
         if not summary:
             return
         truncated = summary[:120]

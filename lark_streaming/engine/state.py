@@ -40,7 +40,7 @@ class TurnPhase(str, Enum):
     CREATING = "creating"      # turn.start 受理，建卡中（幂等屏障）
     STREAMING = "streaming"    # create+send 成功，流式消费
     PAUSED = "paused"          # clarify 等待（同一张卡保流式态）
-    SEALING = "sealing"        # 两步定稿进行中（含澄清窗口挂起）
+    SEALING = "sealing"        # 定稿进行中（含澄清窗口挂起）
     SEALED = "sealed"          # 终态（正常/回退），GC 冷却后回收
 
 

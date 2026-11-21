@@ -58,7 +58,7 @@ cardkit_create ─→ send_card_by_id ─→ stream_element(answer) ─→ updat
                                                           │
               clarify: update(暂停行) ⇄ resume 续流        │
                                                           ▼
-                                        close_streaming ─→ update(终值+页脚)   ← 两步定稿
+                                        close_streaming ─→ update(终值+页脚)   ← 定稿全量写回（#14）
 ```
 
 - 每次更新携带单调递增 `seq`；300317 冲突由传输层自愈重开（04-knowledge-freeze Q1）。

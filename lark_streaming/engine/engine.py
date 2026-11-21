@@ -22,8 +22,8 @@ seal_all_on_shutdown 先定稿再关停。
 前代语义对齐索引（本模块与 v2.0.x composer/engine.py 逐点对应）：
 - 看门狗让位：clarify 暂停/窗口期/降级期静默是预期而非孤儿（前代
   _watchdog_due v2.0.26 分支；新架构 PAUSED 超时真落定见 §1.1）。
-- 定稿四步：终值 patch（致命）→ 页脚/spinner/面板收口/关流式（装饰性，
-  失败仅告警绝不上抛——答案已送达，重发必重复，前代 finalize.py 铁律）。
+- 定稿（#14）：终值 patch（致命）→ 全量写回定稿卡（装饰性，失败仅告警
+  绝不上抛——答案已送达，重发必重复，前代 finalize.py 铁律）。
 - seq 预递增 + 300317/200850 自愈：transport.call_with_seq_recovery 承接，
   引擎只在调用前 ``st.seq += 1`` 并传 reopen（200850 重开）。
 """
@@ -47,13 +47,11 @@ from ..renderer import (
     RenderState,
     RowKind,
     Theme,
-    footer_batch_actions,
-    footer_summary,
-    panel_reseal_actions,
     render_clarify_pending,
     render_deliver_card,
     render_full_card,
     render_initial_card,
+    render_sealed_card,
     trim_to_budget,
 )
 from ..transport import (
@@ -675,12 +673,25 @@ class StreamingEngine:
                 st.card_id, ANSWER_ELEMENT_ID, text, sequence=s
             ),
             what=what,
-            reopen=lambda s: self._transport.cardkit_reopen_streaming(
-                st.card_id, sequence=s
-            ),
+            reopen=lambda s: self._reopen_streaming(st, s),
             clock=self._clock,
         )
         self._note_api_success(box)
+
+    async def _reopen_streaming(
+        self, st: TurnState, sequence: int,
+        card: dict[str, Any] | None = None,
+    ) -> None:
+        """重开流式会话（#14：settings 404 后改走全量更新）.
+
+        调用方传入当前流式卡（``streaming_mode: true``）；未传时由当前
+        渲染态现场渲染。200850 自愈与 T_renew 续期共用。
+        """
+        if card is None:
+            card = render_full_card(st.render, self._theme)
+        await self._transport.cardkit_reopen_streaming(
+            st.card_id, card, sequence=sequence,
+        )
 
     async def _renew_if_due(self, box: ChatBox, st: TurnState) -> None:
         """主动续期（T_renew 540s 龄，02-engine §2）：更新前先重开会话."""
@@ -691,7 +702,7 @@ class StreamingEngine:
             return
         st.seq += 1
         try:
-            await self._transport.cardkit_reopen_streaming(st.card_id, sequence=st.seq)
+            await self._reopen_streaming(st, st.seq)
         except Exception as exc:  # noqa: BLE001 — 续期失败不阻断主链：
             # 200850 由下一次 stream 的 reopen 自愈承接；其余错误由真实
             # API 调用自己暴露（降级红线）
@@ -848,9 +859,7 @@ class StreamingEngine:
             st,
             lambda s: self._transport.cardkit_update(st.card_id, card, sequence=s),
             what="panel:flush",
-            reopen=lambda s: self._transport.cardkit_reopen_streaming(
-                st.card_id, sequence=s
-            ),
+            reopen=lambda s: self._reopen_streaming(st, s, card),
         )
         self._note_api_success(box)
 
@@ -931,9 +940,7 @@ class StreamingEngine:
                         st.card_id, ANSWER_ELEMENT_ID, st.render.answer_text, sequence=s
                     ),
                     what=f"finalize:answer[{reason}]",
-                    reopen=lambda s: self._transport.cardkit_reopen_streaming(
-                        st.card_id, sequence=s
-                    ),
+                    reopen=lambda s: self._reopen_streaming(st, s),
                 )
             except Exception as exc:  # noqa: BLE001 — 第一步失败 → 降级红线
                 self._degrade_chat(box, f"seal:{reason}", exc)
@@ -954,68 +961,32 @@ class StreamingEngine:
         )
 
     async def _seal_decorations(self, box: ChatBox, st: TurnState) -> None:
-        actions = footer_batch_actions(st.render, self._theme)
-        footer_add = actions[0] if len(actions) == 2 else None
-        spinner_del = actions[-1] if actions else None
-        if footer_add is not None:
-            try:
-                st.seq += 1
-                await call_with_seq_recovery(
-                    st,
-                    lambda s: self._transport.cardkit_batch_update(
-                        st.card_id, [footer_add], sequence=s
-                    ),
-                    what="finalize:footer-add",
-                )
-            except Exception:  # noqa: BLE001
-                _logger.warning(
-                    "engine: footer seal failed (non-fatal) card=%s",
-                    st.card_id[:12], exc_info=True,
-                )
-        if spinner_del is not None:
-            try:
-                st.seq += 1
-                await call_with_seq_recovery(
-                    st,
-                    lambda s: self._transport.cardkit_batch_update(
-                        st.card_id, [spinner_del], sequence=s
-                    ),
-                    what="finalize:spinner-del",
-                )
-            except Exception:  # noqa: BLE001
-                _logger.debug(
-                    "engine: spinner delete skipped card=%s", st.card_id[:12],
-                    exc_info=True,
-                )
-        reseal = panel_reseal_actions(st.render, self._theme)
-        if reseal is not None:
-            try:
-                st.seq += 1
-                await call_with_seq_recovery(
-                    st,
-                    lambda s: self._transport.cardkit_batch_update(
-                        st.card_id, reseal, sequence=s
-                    ),
-                    what="finalize:panel-reseal",
-                )
-            except Exception:  # noqa: BLE001
-                _logger.warning(
-                    "engine: panel reseal skipped (non-fatal) card=%s",
-                    st.card_id[:12], exc_info=True,
-                )
+        """定稿收尾（#14：改走全量更新）.
+
+        原四步里的局部通道 ``cardkit_batch_update`` 与
+        ``cardkit_close_streaming``（settings）所调端点经 L3 实测返回
+        HTTP 404，定稿无法落地。现改为一次 :func:`render_sealed_card`
+        全量写回（``cardkit_update``，已验证可用），一步完成写页脚、
+        删 spinner、面板收口、关流式。渲染输入的 ``answer_text`` 就是
+        终值本身（定稿第一步已由 stream_element 全量送达），全量写回与
+        之内容一致，不会覆盖回截断版。
+
+        失败仅告警绝不上抛（前代 finalize.py 铁律：答案已送达，上抛会
+        触发原生重发造成重复消息）；最坏结果是卡留流式态。
+        """
         try:
+            sealed_card = render_sealed_card(st.render, self._theme)
             st.seq += 1
             await call_with_seq_recovery(
                 st,
                 lambda s: self._transport.cardkit_close_streaming(
-                    st.card_id, sequence=s,
-                    summary=footer_summary(st.render, self._theme),
+                    st.card_id, sealed_card, sequence=s,
                 ),
-                what="finalize:close",
+                what="finalize:seal",
             )
         except Exception:  # noqa: BLE001 — v2.0.21 装饰性化：最坏=卡留流式态
             _logger.warning(
-                "engine: close_streaming skipped (non-fatal) card=%s",
+                "engine: seal full-update skipped (non-fatal) card=%s",
                 st.card_id[:12], exc_info=True,
             )
 

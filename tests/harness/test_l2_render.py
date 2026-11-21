@@ -3,7 +3,8 @@
 与 tests/renderer/（L1 纯函数 Golden）的分工：L1 验渲染产物逐字节；
 L2 验「引擎时点表 → 渲染产物 → CardKit 通道」的集成行为（02-engine §4
 时点表 / renderer/streaming.py 模块 docstring 的通道绑定）——面板走
-cardkit_update 全量通道、定稿走局部通道、字节预算裁剪发生在全量更新
+cardkit_update 全量通道、定稿亦走 cardkit_update 全量写回（#14：
+settings / batch_update 端点 404）、字节预算裁剪发生在全量更新
 之前（03-card-schema §6 / 前代 _CARD_BYTE_BUDGET 生产实测值）。
 """
 
@@ -28,19 +29,18 @@ async def test_lazy_panel_no_empty_panel_for_pure_answer(make_harness):
     h = await make_harness(clarify_window_sec=0)
     acks = await h.full_turn(["纯", "回答"], chat=CHAT, turn="t_lazy")
     assert all(a.verdict is Verdict.CONSUMED for a in acks)
-    # 零 cardkit_update 全量调用（无面板行 → 无 flush 通道调用）
-    assert h.server.count("update") == 0
-    # batch_update 仅定稿两步（页脚 add + spinner del），无面板重建行
-    batch = h.server.calls_of("batch_update")
-    assert len(batch) == 2
-    for c in batch:
-        actions = json.dumps(json.loads(c.body["actions"]), ensure_ascii=False)
-        assert UNIFIED_PANEL_ELEMENT_ID not in actions
-        assert "collapsible_panel" not in actions
+    # 恰好 1 次 cardkit_update 全量调用 = 定稿全量写回（#14）；无面板行 →
+    # 无面板 flush 全量调用
+    assert h.server.count("update") == 1
+    # 定稿不再走 batch_update 局部通道（#14：端点 404）
+    assert h.server.count("batch_update") == 0
     # 初始卡与终态卡均无面板元素
     card = h.last_card()
     ids = {e.get("element_id") for e in card.card_json["body"]["elements"]}
     assert UNIFIED_PANEL_ELEMENT_ID not in ids
+    # 定稿卡已关流式且含页脚
+    assert card.streaming_mode is False
+    assert any(e.get("tag") == "hr" for e in card.card_json["body"]["elements"])
 
 
 async def test_panel_rows_land_via_full_update_channel(make_harness):

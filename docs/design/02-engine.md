@@ -29,7 +29,7 @@ IDLE ──turn.start──► CREATING ──create+send ok──► STREAMING 
 | `CREATING` | turn.start 受理 | 帧全部暂存（pending 缓冲，上限见 §5）；create 失败 → SEALED(fallback) |
 | `STREAMING` | create+send_card_by_id 成功 | 全部流事件；answer.final → SEALING；clarify.request → PAUSED |
 | `PAUSED` | clarify.request 受理（同一张卡保流式态） | clarify.answer → STREAMING（续流）；超时 → SEALING（真落定） |
-| `SEALING` | answer.final / pause 超时 / watchdog | 四步定稿（① answer 终值 patch〔致命〕→ ② 页脚 add + spinner 删除 → ③ 面板 reseal → ④ close_streaming〔最后〕）；①失败 → SEALED(fallback)，装饰步（②③④）失败仅告警——答案已送达，重发必重复（audit #7 对齐 engine.py `_seal_decorations`） |
+| `SEALING` | answer.final / pause 超时 / watchdog | 定稿（① answer 终值 patch〔致命〕→ ② 全量写回定稿卡〔装饰性，含页脚 + 删 spinner + 面板收口 + 关流式〕）；①失败 → SEALED(fallback)，装饰步（②）失败仅告警——答案已送达，重发必重复（audit #7 对齐 engine.py `_seal_decorations`；#14：settings / batch_update 端点 404 后改走全量更新） |
 | `SEALED` | 定稿成功（正常/回退） | 终态；60s 冷却后 GC 回收（保留 message_id 反查窗口） |
 
 **单一所有者**：每个状态转移由且仅由一个守卫函数裁决；守卫注册表在
