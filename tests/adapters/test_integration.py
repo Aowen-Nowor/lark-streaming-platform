@@ -64,13 +64,13 @@ async def test_hermes_clarify_pause_resume(transport):
     res = await adapter.send_clarify("oc_int", question="选一个", options=("A", "B"))
     assert res.action is NativeAction.CONSUMED
     await settle()
-    health = engine.snapshot_health()["chats"]["oc_int"]
+    health = engine.snapshot_health(verbose=True)["chats"]["oc_int"]
     assert health["turn_phase"] == "paused"
     # 交互回调回流 → 续流
     res2 = await adapter.clarify_answer("oc_int", values={"form": "A"})
     assert res2.action is NativeAction.CONSUMED
     await settle()
-    assert engine.snapshot_health()["chats"]["oc_int"]["turn_phase"] == "streaming"
+    assert engine.snapshot_health(verbose=True)["chats"]["oc_int"]["turn_phase"] == "streaming"
     # 定稿收口
     fin = await adapter.edit("oc_int", "最终答案", finalize=True)
     assert fin.action is NativeAction.CONSUMED

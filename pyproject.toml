@@ -7,14 +7,14 @@ license = { file = "LICENSE" }
 requires-python = ">=3.11"
 authors = [{ name = "Aowen-Nowor" }]
 dependencies = [
-    "httpx>=0.27",
+    "httpx>=0.28",
     "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
 gateway = [
     # 形态 B（HTTP/WS 绑定）：Phase 3 协议层绑定引入（stdio 绑定零依赖）
-    "aiohttp>=3.9",
+    "aiohttp>=3.9.4",
 ]
 dev = [
     "pytest>=8.0",

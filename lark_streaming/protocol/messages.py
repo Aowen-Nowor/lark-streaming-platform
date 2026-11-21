@@ -103,5 +103,8 @@ def negotiate_hello(raw: dict[str, Any], *, settings: Any = None) -> tuple[dict[
         return wire_error("handshake_failed:invalid_payload", fid), False
     pv = payload.get("protocol_v")
     if isinstance(pv, bool) or not isinstance(pv, int) or pv != PROTOCOL_VERSION:
-        return wire_error(f"handshake_failed:unsupported_protocol_v:{pv}", fid), False
+        # audit #9-L1：客户端可控值不整帧进 detail（长度红线）——类型化 +
+        # 截断，防恶意客户端撑大错误帧与日志
+        pv_repr = str(pv)[:32] if isinstance(pv, (str, int, float)) else type(pv).__name__
+        return wire_error(f"handshake_failed:unsupported_protocol_v:{pv_repr}", fid), False
     return hello_ack(fid, settings=settings), True

@@ -29,7 +29,7 @@ IDLE ──turn.start──► CREATING ──create+send ok──► STREAMING 
 | `CREATING` | turn.start 受理 | 帧全部暂存（pending 缓冲，上限见 §5）；create 失败 → SEALED(fallback) |
 | `STREAMING` | create+send_card_by_id 成功 | 全部流事件；answer.final → SEALING；clarify.request → PAUSED |
 | `PAUSED` | clarify.request 受理（同一张卡保流式态） | clarify.answer → STREAMING（续流）；超时 → SEALING（真落定） |
-| `SEALING` | answer.final / pause 超时 / watchdog | 两步定稿（close_streaming → 终值+页脚 patch）；失败 → SEALED(fallback) |
+| `SEALING` | answer.final / pause 超时 / watchdog | 四步定稿（① answer 终值 patch〔致命〕→ ② 页脚 add + spinner 删除 → ③ 面板 reseal → ④ close_streaming〔最后〕）；①失败 → SEALED(fallback)，装饰步（②③④）失败仅告警——答案已送达，重发必重复（audit #7 对齐 engine.py `_seal_decorations`） |
 | `SEALED` | 定稿成功（正常/回退） | 终态；60s 冷却后 GC 回收（保留 message_id 反查窗口） |
 
 **单一所有者**：每个状态转移由且仅由一个守卫函数裁决；守卫注册表在
@@ -63,13 +63,21 @@ CHAT_OK ⇄ CHAT_DEGRADED ⇄ CHAT_RECOVERING → CHAT_OK
 ## 3. 并发模型
 
 1. **per-chat 显式队列**（取代前代 per-chat asyncio.Lock）：每个 chat 一个
-   有序事件队列 + 单消费者协程。事件入队即返回受理，消费按序执行；
-   消费完成时逐帧发 ack。**跨 chat 完全并行，chat 内严格串行**。
+   有界有序事件队列（`maxsize=pending_max`，默认 64，钉制 8~4096）+
+   单消费者协程。事件入队即返回受理，消费按序执行；消费完成时逐帧发
+   ack。**跨 chat 完全并行，chat 内严格串行**。
 2. **建卡窗口幂等**：CREATING 态本身即幂等屏障——建卡窗口（0.5~1s 网络挂起）
    内到达的帧进 pending 缓冲而非触发第二次建卡（前代 10-12 14:30「几点了」
    一轮 3 卡事故的根治；锁内复查语义由状态机天然提供）。
-3. **pending 缓冲上限**：64 行（前代 `_PENDING_STATUS_MAX`）；超限丢弃最旧
-   interim/thinking，保留 tool 行与 answer 帧（answer 帧永不丢弃）。
+3. **队列背压契约（2026-12 audit #2 显式化）**：队列满时新帧**不排队、
+   不阻塞**——立得 `FALLBACK(queue_full:native_delivery)` 回执，接入方
+   原生投递。背压就是另一种降级：帧不丢语义与永不丢帧红线同构
+   （降级红线 = API 失败必回执；背压红线 = 队列容量不可用时也必回执）。
+   控制帧（watchdog/TTL/flush）入队失败可安全丢弃：TTL/SEAL_PROBE 由
+   sweep 周期重发，watchdog 场景的队列拥塞本身意味着消费者活跃。
+   另：面板 pending 行缓冲上限 64 行（前代 `_PENDING_STATUS_MAX`）；
+   超限丢弃最旧 interim/thinking，保留 tool 行与 answer 帧
+   （answer 帧永不丢弃）。
 4. **定时器归属**：全部定时器按 chat 注册于引擎级调度表；chat GC 时级联
    取消。重复武装幂等（复查挡）。
 

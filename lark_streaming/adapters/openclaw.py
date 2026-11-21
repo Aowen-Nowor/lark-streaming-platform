@@ -83,15 +83,36 @@ class OpenclawMapper:
         self._pending: dict[str, deque[tuple[str, dict[str, Any]]]] = {}
 
     def translate(self, msg: dict[str, Any]) -> list[dict[str, Any]]:
-        """bridge 消息 → 信封序列（永不抛异常；坏消息 → 空序列 + 日志）.
+        """bridge 消息 → 信封序列（永不抛异常；翻译失败 → deliver 兜底）.
 
-        返回空序列 = 无可投递帧（消息缺字段 / 进度回合前缓冲）。
+        audit #9-S2：翻译失败不再静默返回空序列（内容无声丢失只剩日志）
+        ——兜底为 ``deliver`` 直投原文（引擎旁路静态卡通道，02-engine §8），
+        失败的消息至少可达用户；deliver 自身失败由引擎降级红线兜住。
+        返回空序列 = 消息缺字段 / 进度回合前缓冲（合法的无帧语义）。
         """
         try:
             return self._translate(msg)
         except Exception:  # noqa: BLE001 — 映射器永不击穿 bridge 主循环
-            _logger.warning("openclaw mapper: translate failed", exc_info=True)
+            _logger.warning("openclaw mapper: translate failed → deliver fallback", exc_info=True)
+            return self._deliver_fallback(msg)
+
+    def _deliver_fallback(self, msg: dict[str, Any]) -> list[dict[str, Any]]:
+        """翻译失败的原文兜底：chat 可知则以 deliver 直投（尽力而为）."""
+        chat_id = msg.get("chat_id") if isinstance(msg, dict) else None
+        if not isinstance(chat_id, str) or not chat_id:
             return []
+        content = msg.get("content")
+        text = content if isinstance(content, str) else ("" if content is None else str(content))
+        if not text:
+            return []
+        try:
+            env = self._frames.build(
+                "deliver", chat_id=chat_id, payload={"text": text},
+            )
+        except Exception:  # noqa: BLE001 — 兜底构造也失败：只剩日志（不击穿 bridge）
+            _logger.error("openclaw mapper: deliver fallback construction failed", exc_info=True)
+            return []
+        return [env]
 
     # ── 翻译核心 ────────────────────────────────────────────────────────
 

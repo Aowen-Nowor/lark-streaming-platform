@@ -40,3 +40,16 @@ def make_emit(out: list[dict]) -> Callable[[str], Awaitable[None]]:
         out.append(json.loads(text))
 
     return _emit
+
+
+@pytest.fixture(autouse=True)
+def _isolate_proxy_env(monkeypatch):
+    """audit #9-S3：隔离出口代理环境变量——NO_PROXY 含方括号 IPv6 条目时
+    httpx 0.28.x 代理配置解析失败，会在带代理的开发机/CI 上误报 11 个
+    HTTP 绑定测试。这不是产品缺陷，但必须让新贡献者的首跑是绿的。"""
+    for var in (
+        "http_proxy", "https_proxy", "all_proxy",
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+        "no_proxy", "NO_PROXY",
+    ):
+        monkeypatch.delenv(var, raising=False)

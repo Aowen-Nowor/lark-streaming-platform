@@ -13,12 +13,14 @@
 - ``TurnState.seq``：CardKit 卡片 sequence，**预递增纪律**（前代
   composer/engine.py: 每次 API 调用前 ``st.seq += 1``，300317/200850 由
   transport.call_with_seq_recovery 继续自愈递增）。
-- ``TurnState.stream_session_at``：200850 会话续期计时基线；字段名与
-  transport.seq.mark_session_renewed 的写入约定逐字对齐。
-- 02-engine §3.2/§3.3 的「建卡窗口 pending 缓冲（64 行上限）」在本架构
-  由 per-chat 有序队列**天然实现**：单消费者串行消费即建卡幂等屏障，
-  窗口期帧排队等待而非触发第二次建卡；建卡失败时队列中后续帧按
-  「无活跃回合」裁决 fallback（接入方原生投递，永不丢帧红线成立）。
+- ``TurnState.stream_session_at``：200850 会话续期计时基线；写入时钟由
+  引擎注入（可测试性红线：transport helper 不自读时钟写入引擎状态）。
+- 02-engine §3.3 的「建卡窗口 pending 缓冲（64 行上限）」在本架构由
+  per-chat 有序队列 + ``maxsize=pending_max`` 显式实现（audit #2：
+  修复前队列无界，pending_max 仅存于 settings 零接线）：队列满时新帧
+  立得 ``FALLBACK(queue_full:native_delivery)`` 回执——背压就是另一种
+  降级，帧不丢语义与永不丢帧红线同构；建卡窗口内帧排队等待而非触发
+  第二次建卡；建卡失败时队列中后续帧按「无活跃回合」裁决 fallback。
 """
 
 from __future__ import annotations
@@ -124,11 +126,11 @@ class TurnState:
 
 @dataclass(slots=True)
 class ChatBox:
-    """per-chat 运行时盒：队列 + 单消费者 + 级联定时器（02-engine §3）."""
+    """per-chat 运行时盒：有界队列 + 单消费者 + 级联定时器（02-engine §3）."""
 
     chat_id: str
 
-    # 有序事件队列 + 单消费者协程（跨 chat 完全并行，chat 内严格串行）
+    # 有界有序事件队列 + 单消费者协程（跨 chat 完全并行，chat 内严格串行）
     queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     consumer: asyncio.Task | None = None
     busy: bool = False            # 消费者在管道中（sweeper 避让依据）
@@ -146,3 +148,8 @@ class ChatBox:
     # 级联定时器（watchdog / pause / flush；chat GC 时级联取消，02-engine §3.4）
     timers: dict[str, asyncio.TimerHandle] = field(default_factory=dict)
     closing: bool = False
+
+    @classmethod
+    def create(cls, chat_id: str, *, pending_max: int) -> "ChatBox":
+        """构造带背压上限的 chat 盒（02-engine §3.3 pending 缓冲显式接线）."""
+        return cls(chat_id=chat_id, queue=asyncio.Queue(maxsize=pending_max))

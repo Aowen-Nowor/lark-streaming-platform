@@ -26,9 +26,17 @@ from typing import Any
 
 from .messages import WireFrameError, wire_error, parse_frame
 
-__all__ = ["StdioBinding", "serve_stdio"]
+__all__ = ["StdioBinding", "serve_stdio", "MAX_STDIN_LINE_BYTES"]
 
 EmitFn = Callable[[str], Awaitable[None]]
+
+#: 逐行输入上限（与 StreamReader limit 一致；audit #4：线程泵路径修复前无上限——
+# 恶意/失控生产者一行可内存击穿托管进程）
+MAX_STDIN_LINE_BYTES = 8 * 1024 * 1024
+
+#: 行超限哨兵（不会与合法 JSON 文本行撞——原始 NUL 不出现于 JSON 文本；
+# serve 循环检测到即回 frame_too_large 错误行并继续——输入劣化 ≠ 进程故障）
+_LINE_TOO_LARGE = "\x00__LSP_LINE_TOO_LARGE__"
 
 
 async def _stderr_emit(text: str) -> None:
@@ -49,7 +57,13 @@ async def _stdin_lines() -> AsyncIterator[str]:
             yield line
         return
     while True:
-        line = await reader.readline()
+        try:
+            line = await reader.readline()
+        except ValueError:
+            # 单帧超限（audit #4）：StreamReader 缓冲已清空，流继续——
+            # 劣化输入回错误行而非进程停机（绑定层不可击穿）
+            yield _LINE_TOO_LARGE
+            continue
         if not line:
             return
         yield line.decode("utf-8", errors="replace")
@@ -60,10 +74,25 @@ async def _stdin_lines_via_thread() -> AsyncIterator[str]:
     import threading
 
     q: queue.Queue = queue.Queue()
+    too_large = _LINE_TOO_LARGE.encode()
 
     def _pump() -> None:
         try:
-            for raw in sys.stdin.buffer:
+            eof = False
+            while not eof:
+                raw = sys.stdin.buffer.readline(MAX_STDIN_LINE_BYTES + 1)
+                if not raw:
+                    eof = True
+                    break
+                if len(raw) > MAX_STDIN_LINE_BYTES:
+                    q.put(too_large)
+                    # 丢弃该行剩余字节直到换行（泵不承载协议语义；防御性）
+                    while not raw.endswith(b"\n"):
+                        raw = sys.stdin.buffer.readline(MAX_STDIN_LINE_BYTES)
+                        if not raw:
+                            eof = True  # EOF 截断：不 return——出口统一 put(None)
+                            break
+                    continue
                 q.put(raw)
         except Exception:  # noqa: BLE001 — stdin 关闭/不可读
             pass
@@ -114,6 +143,11 @@ class StdioBinding:
             if not stripped:
                 continue
             count += 1
+            if stripped == _LINE_TOO_LARGE:
+                # 单帧超限（audit #4）：回错误行并继续——输入劣化不是进程
+                # 故障（修复前 readline ValueError 一帧带停全进程）
+                await self._send(emit, send_lock, wire_error("frame_too_large"))
+                continue
             task = asyncio.create_task(self._handle_line(stripped, emit, send_lock))
             pending.add(task)
             task.add_done_callback(pending.discard)

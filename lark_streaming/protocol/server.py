@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any
 
 from aiohttp import WSMsgType, web
@@ -32,16 +33,57 @@ from .messages import WireFrameError, negotiate_hello, parse_frame, wire_error
 
 _logger = logging.getLogger("lark_streaming.protocol.server")
 
-__all__ = ["build_app", "serve_http", "stop_http", "run_ws_connection"]
+#: 单次 batch 请求元素上限（audit #2：无上限 batch = 放大攻击面——
+# 单请求打满引擎全部 chat 队列；256 覆盖正常批量，超出走协议错误）
+MAX_BATCH_SIZE = 256
+
+#: loopback 监听地址集合（fail-closed 判定基线：这些地址之外必须带 token）
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+#: 网关 Bearer token 环境变量名（audit #1：secure-by-default 信任模型）
+GATEWAY_TOKEN_ENV = "LSP_GATEWAY_TOKEN"
+
+__all__ = [
+    "build_app", "serve_http", "stop_http", "run_ws_connection",
+    "MAX_BATCH_SIZE", "GATEWAY_TOKEN_ENV",
+]
 
 
 def _dump(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def build_app(engine: StreamingEngine, *, settings: Any = None) -> web.Application:
-    """装配 HTTP+WS 网关应用（Phase 4 网关 shell 的组装基座）."""
+def _bearer_middleware(token: str):
+    """Bearer token 鉴权中间件（audit #1）：token 非空时全端点强制.
+
+    覆盖 /v1/events、/v1/events:batch、/v1/health、/v1/ws（WS 握手同样
+    走 HTTP 升级请求，middleware 生效）；未携带或错配 → 401 + 错误对象
+    （与协议错误同形态，§7）。
+    """
+    expected = f"Bearer {token}"
+
+    @web.middleware
+    async def mw(request: web.Request, handler) -> web.StreamResponse:
+        if request.headers.get("Authorization", "") != expected:
+            return web.json_response(wire_error("unauthorized"), status=401)
+        return await handler(request)
+
+    return mw
+
+
+def build_app(
+    engine: StreamingEngine,
+    *,
+    settings: Any = None,
+    auth_token: str = "",
+) -> web.Application:
+    """装配 HTTP+WS 网关应用（Phase 4 网关 shell 的组装基座）.
+
+    ``auth_token`` 非空 → 全端点 Bearer 鉴权（audit #1 secure-by-default）。
+    """
     app = web.Application()
+    if auth_token:
+        app.middlewares.append(_bearer_middleware(auth_token))
 
     async def events(request: web.Request) -> web.Response:
         try:
@@ -60,6 +102,10 @@ def build_app(engine: StreamingEngine, *, settings: Any = None) -> web.Applicati
             return web.json_response(wire_error("invalid_json"), status=400)
         if not isinstance(raw, list):
             return web.json_response(wire_error("invalid_envelope:not_an_array"), status=400)
+        if len(raw) > MAX_BATCH_SIZE:
+            return web.json_response(
+                wire_error(f"batch_too_large:max_{MAX_BATCH_SIZE}"), status=400
+            )
         acks: list[dict[str, Any]] = []
         for item in raw:
             if not isinstance(item, dict):
@@ -70,7 +116,9 @@ def build_app(engine: StreamingEngine, *, settings: Any = None) -> web.Applicati
         return web.json_response(acks)
 
     async def health(request: web.Request) -> web.Response:
-        return web.json_response(engine.snapshot_health())
+        # audit #11：默认只回汇总三计数；chat 明细需显式 verbose 拉取
+        verbose = request.query.get("verbose", "") in ("1", "true")
+        return web.json_response(engine.snapshot_health(verbose=verbose))
 
     async def websocket(request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=30.0)
@@ -164,9 +212,21 @@ async def serve_http(
     host: str = "127.0.0.1",
     port: int = 7800,
     settings: Any = None,
+    auth_token: str | None = None,
 ) -> web.AppRunner:
-    """启动 HTTP/WS 监听（返回 runner 供调用方管理生命周期）."""
-    runner = web.AppRunner(build_app(engine, settings=settings))
+    """启动 HTTP/WS 监听（返回 runner 供调用方管理生命周期）.
+
+    fail-closed（audit #1）：非 loopback 监听且无 token（参数未传时回落
+    env ``LSP_GATEWAY_TOKEN``）→ 拒绝启动——secure-by-default 信任模型：
+    错误配置宁可起不来，不可裸奔上线。
+    """
+    token = auth_token if auth_token is not None else os.environ.get(GATEWAY_TOKEN_ENV, "")
+    if host not in _LOOPBACK_HOSTS and not token:
+        raise RuntimeError(
+            f"gateway: non-loopback bind {host} without {GATEWAY_TOKEN_ENV} "
+            "is refused (fail-closed; set the env or bind 127.0.0.1)"
+        )
+    runner = web.AppRunner(build_app(engine, settings=settings, auth_token=token))
     await runner.setup()
     site = web.TCPSite(runner, host=host, port=port)
     await site.start()

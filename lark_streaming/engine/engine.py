@@ -59,6 +59,7 @@ from ..renderer import (
 from ..transport import (
     FeishuTransport,
     call_with_seq_recovery,
+    is_definitive_reply_anchor_error,
     is_rate_limit_error,
 )
 from .events import (
@@ -198,12 +199,31 @@ class StreamingEngine:
             box.health = ChatHealth.RECOVERING  # 冷却期满——本帧即静默探测
         fut: asyncio.Future[Ack] = self._loop.create_future()  # type: ignore[union-attr]
         self._ack_waiters[ev.frame_id] = fut
-        box.queue.put_nowait(_QueueItem.for_event(ev, fut))
+        try:
+            box.queue.put_nowait(_QueueItem.for_event(ev, fut))
+        except asyncio.QueueFull:
+            # 背压就是另一种降级（audit #2）：队列满 → 立即 FALLBACK 回执，
+            # 接入方原生投递（帧不丢语义与永不丢帧红线同构）。修复前队列
+            # 无界——恶意/失控生产者可内存击穿。
+            self._ack_waiters.pop(ev.frame_id, None)
+            fut.cancel()
+            ack = Ack(
+                ev.frame_id, Verdict.FALLBACK,
+                detail="queue_full:native_delivery",
+            )
+            self._cache_ack(ev.frame_id, ack)
+            return ack
         self._ensure_consumer(box)
         return await fut
 
-    def snapshot_health(self) -> dict[str, Any]:
-        """观测面（02-engine §9）：与 GET /v1/health 同源."""
+    def snapshot_health(self, *, verbose: bool = False) -> dict[str, Any]:
+        """观测面（02-engine §9）：与 GET /v1/health 同源.
+
+        ``verbose=False``（默认）只返回汇总三计数——不含 chat_id 索引的
+        全量明细（last_error/queue_depth/answer_bytes 等可观测细节是
+        部署拓扑与业务流量侧写，audit #11：默认不外泄）；明细经
+        ``verbose=True`` 显式拉取。
+        """
         now = self._clock()
         chats: dict[str, dict[str, Any]] = {}
         for chat_id, box in self._chats.items():
@@ -223,7 +243,7 @@ class StreamingEngine:
                 "panel_rows": len(st.render.panel_rows) if st is not None else 0,
                 "sealed_pending_gc": len(box.sealed),
             }
-        return {
+        health: dict[str, Any] = {
             "chats_total": len(chats),
             "active_cards": sum(
                 1 for c in chats.values() if c["turn_phase"] not in ("idle", "sealed")
@@ -231,8 +251,10 @@ class StreamingEngine:
             "degraded_chats": sum(
                 1 for c in chats.values() if c["chat_health"] != ChatHealth.OK.value
             ),
-            "chats": chats,
         }
+        if verbose:
+            health["chats"] = chats
+        return health
 
     async def seal_all_on_shutdown(self) -> None:
         """关停语义（02-engine §7.3）：全部活跃卡先定稿再关流."""
@@ -325,7 +347,9 @@ class StreamingEngine:
     def _chat_box(self, chat_id: str) -> ChatBox:
         box = self._chats.get(chat_id)
         if box is None:
-            box = ChatBox(chat_id=chat_id)
+            box = ChatBox.create(
+                chat_id, pending_max=self._settings.pending_max
+            )
             self._chats[chat_id] = box
         return box
 
@@ -544,7 +568,9 @@ class StreamingEngine:
             return Ack(
                 ev.frame_id, Verdict.FALLBACK, detail=f"create_failed:{_code_of(exc)}"
             )
-        # 锚定投递（Q10：reply 失败降级直发——内容永不丢）
+        # 锚定投递（Q10 + audit #3 守卫化：仅锚点确定性失效才换道直发——
+        # 传输结果未知时直发可能与未竟的 reply 竞速产生重复卡片，改走
+        # 降级红线：FALLBACK 回执，接入方原生投递）
         message_id = ""
         try:
             if st.reply_to:
@@ -553,9 +579,11 @@ class StreamingEngine:
                         st.reply_to, st.card_id
                     )
                 except Exception as anchor_exc:  # noqa: BLE001
+                    if not is_definitive_reply_anchor_error(anchor_exc):
+                        raise  # 非确定性（网络/限频/瞬态）→ 外层降级红线，不换道
                     _logger.warning(
-                        "engine: reply anchor failed chat=%s anchor=%s — direct send (Q10)",
-                        box.chat_id, st.reply_to[:20], exc_info=anchor_exc,
+                        "engine: reply anchor definitively dead chat=%s anchor=%s code=%s — direct send (Q10)",
+                        box.chat_id, st.reply_to[:20], getattr(anchor_exc, "code", None),
                     )
                     message_id = await self._transport.send_card_by_id_to_chat(
                         box.chat_id, st.card_id
@@ -564,7 +592,7 @@ class StreamingEngine:
                 message_id = await self._transport.send_card_by_id_to_chat(
                     box.chat_id, st.card_id
                 )
-        except Exception as exc:  # noqa: BLE001 — 直发也失败：回合终结
+        except Exception as exc:  # noqa: BLE001 — 直发也失败 / 锚点非确定性失效：回合终结
             self._degrade_chat(box, "create:send", exc)
             self._seal_without_card(box, st, now, failed=True)
             _logger.warning(
@@ -650,6 +678,7 @@ class StreamingEngine:
             reopen=lambda s: self._transport.cardkit_reopen_streaming(
                 st.card_id, sequence=s
             ),
+            clock=self._clock,
         )
         self._note_api_success(box)
 
@@ -1088,7 +1117,15 @@ class StreamingEngine:
                     clarify_mid = await self._transport.reply_card_by_id(
                         st.reply_to, clarify_card_id
                     )
-                except Exception:  # noqa: BLE001 — Q10 锚定失败降级直发
+                except Exception as anchor_exc:  # noqa: BLE001 — Q10 + audit #3：
+                    # 仅锚点确定性失效才降级直发；传输结果未知 → 上抛走
+                    # 外层回滚暂停 + FALLBACK（与 _do_create 同一守卫语义）
+                    if not is_definitive_reply_anchor_error(anchor_exc):
+                        raise
+                    _logger.warning(
+                        "engine: clarify anchor definitively dead chat=%s code=%s — direct send (Q10)",
+                        box.chat_id, getattr(anchor_exc, "code", None),
+                    )
                     clarify_mid = await self._transport.send_card_by_id_to_chat(
                         box.chat_id, clarify_card_id
                     )
@@ -1117,10 +1154,12 @@ class StreamingEngine:
             await self._flush_panel(box, st)  # 暂停行即时可见（前代 _patch_status）
         except Exception as exc:  # noqa: BLE001 — 行 flush 失败走降级红线
             self._degrade_chat(box, "clarify:panel", exc)
+        # audit #9-L5：问题原文是用户输入，不进日志（与 _do_clarify_answer
+        # 只记 values_keys 同一纪律）——只记 kind 与长度
         _logger.info(
-            "engine: clarify paused chat=%s turn=%s clarify_id=%s question=%r",
+            "engine: clarify paused chat=%s turn=%s clarify_id=%s kind=%s q_len=%d",
             box.chat_id, st.turn_id, st.clarify_id,
-            (form.question or "")[:40],
+            getattr(form, "kind", ""), len(getattr(form, "question", "") or ""),
         )
         return Ack(ev.frame_id, Verdict.CONSUMED)
 
@@ -1276,7 +1315,17 @@ class StreamingEngine:
     def _enqueue_control(self, box: ChatBox, ctrl: Ctrl) -> None:
         if box.closing:
             return
-        box.queue.put_nowait(_QueueItem.for_control(ctrl))
+        try:
+            box.queue.put_nowait(_QueueItem.for_control(ctrl))
+        except asyncio.QueueFull:
+            # 队列满时控制帧可安全丢弃：TTL/SEAL_PROBE 由 sweep 周期重发，
+            # watchdog 定时器入队时的拥塞本身意味着事件帧仍在消费
+            # （消费者活跃即看门狗欲防的目标未成立）。
+            _logger.debug(
+                "engine: control frame dropped (queue full) chat=%s ctrl=%s",
+                box.chat_id, ctrl.value,
+            )
+            return
         self._ensure_consumer(box)
 
     # ── GC / 回执缓存 / 生命周期 ────────────────────────────────────────

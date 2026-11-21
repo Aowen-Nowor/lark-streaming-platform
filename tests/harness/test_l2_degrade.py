@@ -112,3 +112,37 @@ async def test_stream_failure_degrades_30s_band(harness):
     ack2 = await h.submit("answer.delta", turn=turn, payload={"delta": "y"}, seq=3)
     assert ack2.verdict is Verdict.DEGRADED
     assert len(h.server.call_log) == n_calls
+
+
+async def test_card_rate_limit_200937_backoff_and_recovery(make_harness, monkeypatch):
+    """audit #8：200937 卡级频控（2026-11-20 L3 真火入册）——分道退避 + 恢复.
+
+    语义分道（retry.py）：200937 与 99991400 同走限频退避档（1.0/3.0/6.0）；
+    mock 台架层全链路在环（真实 transport × mock HTTP）。测试内把限频退避
+    压为 0 保持秒级（档位本身由 transport L1 覆盖）。
+    """
+    from lark_streaming.transport import retry as retry_mod
+
+    # 只把退避档位归零（asyncio.sleep(0) 真实但立即）；不 patch 全局
+    # asyncio.sleep——harness/引擎内部的等待循环会被 fake 化死循环。
+    monkeypatch.setattr(retry_mod, "RATE_LIMIT_RETRY_DELAYS", (0.0, 0.0, 0.0))
+    monkeypatch.setattr(retry_mod, "TRANSIENT_RETRY_DELAYS", (0.0, 0.0, 0.0))
+
+    h = await make_harness()
+    await h.submit("turn.start", turn="t_937")
+    card_id = h.engine._chats[CHAT].turn.card_id
+    # 一次性武装 200937 ×4（首试 + 3 重试全部撞墙）→ 引擎降级
+    h.server.rate_limit_card(card_id, times=4)
+    ack = await h.submit("answer.delta", turn="t_937", payload={"delta": "x"}, seq=1)
+    assert ack.verdict is Verdict.FALLBACK
+    assert ack.detail == "stream_failed:200937"
+    failed = [c for c in h.server.calls_of("stream_element") if c.code == 200937]
+    assert len(failed) == 4  # 退避链全部经真实 transport 在环
+    box = h.engine._chats[CHAT]
+    assert box.health is ChatHealth.DEGRADED
+    # 频控解除 + 冷却期满 → 探测恢复
+    h.server.clear_failures()
+    box.degraded_until = 0.0
+    ack2 = await h.submit("answer.delta", turn="t_937", payload={"delta": "y"}, seq=2)
+    assert ack2.verdict is Verdict.CONSUMED
+    assert box.health is ChatHealth.OK

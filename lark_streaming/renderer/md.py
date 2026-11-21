@@ -54,6 +54,11 @@ _RE_MULTI_NEWLINE = re.compile(r"\n{3,}")
 _RE_SHORT_MD_CHECK = re.compile(r"^#{1,6} |\n#{1,6} |```|!\[|\n{3,}")
 _RE_FENCE_LINE = re.compile(r"^\s*(`{3,})")  # 行首围栏标记（v2.0.21 围栏状态机）
 
+# 飞书 markdown at 标签（audit #12：默认剥除——LLM 输出的 ``<at id=...>``
+# 会真 @ 人/群，引发打扰与仿冒风险；渲染器是纯函数红线，at 是否放开
+# 是接入方安全策略，需显式 allow_at_users）
+_RE_AT_TAG = re.compile(r"</?\s*at(?:\s[^>]*)?/?>", re.IGNORECASE)
+
 
 def find_tables_outside_code_blocks(text: str) -> list[tuple[int, int, str]]:
     """查找代码块外的 markdown 表格，返回 [(start, end, raw), ...]."""
@@ -129,9 +134,11 @@ def _fence_balanced(prefix: str) -> bool:
     return len(_RE_FENCE_LINE.findall(prefix)) % 2 == 0
 
 
-def sanitize_markdown(text: str) -> str:
+def sanitize_markdown(text: str, *, allow_at_users: bool = False) -> str:
     """markdown 卫生化（前代 optimize_markdown_style 逐语义迁移）.
 
+    0. 剥 ``<at>`` 标签（audit #12；``allow_at_users=True`` 显式放开——
+       安全动作先于装饰性处理与短文本直返，短注入同样拦截）
     1. 提取闭合代码块为占位符保护
     2. 围栏状态机标题降级（仅存在 H1-H3 时）
     3. 还原代码块
@@ -140,6 +147,8 @@ def sanitize_markdown(text: str) -> str:
     短文本（<100 字符且无结构标记）零处理直返。任何异常原文返回（装饰性
     处理永不影响内容可见——前代同语义）。
     """
+    if not allow_at_users:
+        text = _RE_AT_TAG.sub("", text)
     if len(text) < 100 and not _RE_SHORT_MD_CHECK.search(text):
         return text
     try:

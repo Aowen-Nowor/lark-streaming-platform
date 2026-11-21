@@ -10,6 +10,15 @@
 
 本层职责边界：单次 API 调用的正确性与重试；sequence 递增、300317/200850
 自愈循环、per-chat 串行化归引擎层（02-engine）。本层只透传 sequence。
+
+重试单层化（2026-12 audit #10）：``retry_transient`` 是本层唯一通用重试
+层；``_request`` 只保留 token 失效自愈重试（401/403 + 9999166x，与瞬态
+语义正交），网络错误一律上抛——修复前内层 3 次 × 外层 4 轮叠加成最坏
+12 次单帧 HTTP 尝试。
+
+幂等键（audit #3）：IM 投递公开方法在入口生成一次 uuid4，贯穿该次逻辑
+投递的全部重试（飞书 send 走 query param ``uuid``、reply 走 body 字段
+``uuid``）——网络错误重放时飞书侧按 uuid 去重，重试不再是全新投递。
 """
 
 from __future__ import annotations
@@ -17,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from typing import Any
 
 import httpx
@@ -112,11 +122,9 @@ class FeishuTransport:
                 raise
             except asyncio.CancelledError:
                 raise
-            except (httpx.RequestError, httpx.TimeoutException) as e:
-                last_error = e
-                if attempt < 2:
-                    await asyncio.sleep(_TOKEN_RETRY_DELAYS[attempt])
-                    continue
+            except (httpx.RequestError, httpx.TimeoutException):
+                # 重试单层化（audit #10）：网络错误不再内层重试，一律上抛
+                # 给 retry_transient 唯一重试层（否则 3×4=12 次最坏尝试）。
                 raise
         raise last_error  # unreachable, type-safe
 
@@ -124,7 +132,10 @@ class FeishuTransport:
 
     async def send_card_to_chat(self, chat_id: str, card: dict[str, Any]) -> str:
         """直发独立卡片 JSON 到会话（非回复），返回 message_id."""
-        return await self._send_message(chat_id, "interactive", json.dumps(card, ensure_ascii=False))
+        return await self._send_message(
+            chat_id, "interactive", json.dumps(card, ensure_ascii=False),
+            uuid_key=uuid.uuid4().hex,
+        )
 
     async def send_card_by_id_to_chat(self, chat_id: str, card_id: str) -> str:
         """按 card_id 直发 CardKit 卡片实体到会话（非回复），返回 message_id.
@@ -133,22 +144,36 @@ class FeishuTransport:
         （reply 对非 om_ id 必报 99992354）。
         """
         content = json.dumps({"type": "card", "data": {"card_id": card_id}}, ensure_ascii=False)
-        return await self._send_message(chat_id, "interactive", content)
+        return await self._send_message(
+            chat_id, "interactive", content, uuid_key=uuid.uuid4().hex,
+        )
 
     async def send_text_to_chat(self, chat_id: str, text: str) -> str:
         """直发纯文本（原生兜底路径），返回 message_id."""
-        return await self._send_message(chat_id, "text", json.dumps({"text": text}, ensure_ascii=False))
+        return await self._send_message(
+            chat_id, "text", json.dumps({"text": text}, ensure_ascii=False),
+            uuid_key=uuid.uuid4().hex,
+        )
 
     async def reply_card_by_id(self, message_id: str, card_id: str) -> str:
-        """以 reply 形态发送 CardKit 卡片实体（锚定引用），返回 message_id."""
-        content = json.dumps({"type": "card", "data": {"card_id": card_id}}, ensure_ascii=False)
-        return await retry_transient("reply_card_by_id", lambda: self._reply_message(message_id, "interactive", content))
+        """以 reply 形态发送 CardKit 卡片实体（锚定引用），返回 message_id.
 
-    async def _send_message(self, chat_id: str, msg_type: str, content: str) -> str:
+        重试由 ``_reply_message`` 内层 retry_transient 承担——本方法不再
+        包外层（audit #10 单层化：reply 路径修复前同样双层叠加）。
+        """
+        content = json.dumps({"type": "card", "data": {"card_id": card_id}}, ensure_ascii=False)
+        return await self._reply_message(
+            message_id, "interactive", content, uuid_key=uuid.uuid4().hex,
+        )
+
+    async def _send_message(
+        self, chat_id: str, msg_type: str, content: str, *, uuid_key: str,
+    ) -> str:
+        """单层 retry_transient 包裹；uuid_key 由公开方法生成一次（幂等键）."""
         async def _do() -> Any:
             data = await self._request(
                 "POST", "/im/v1/messages",
-                params={"receive_id_type": "chat_id"},
+                params={"receive_id_type": "chat_id", "uuid": uuid_key},
                 json_body={"receive_id": chat_id, "msg_type": msg_type, "content": content},
                 operation=f"send_message[{msg_type}]",
             )
@@ -159,11 +184,14 @@ class FeishuTransport:
 
         return await retry_transient(f"send_message[{msg_type}]", _do)
 
-    async def _reply_message(self, message_id: str, msg_type: str, content: str) -> str:
+    async def _reply_message(
+        self, message_id: str, msg_type: str, content: str, *, uuid_key: str,
+    ) -> str:
+        """单层 retry_transient 包裹；uuid 走 body 字段（reply wire 形态）."""
         async def _do() -> Any:
             data = await self._request(
                 "POST", f"/im/v1/messages/{message_id}/reply",
-                json_body={"msg_type": msg_type, "content": content},
+                json_body={"msg_type": msg_type, "content": content, "uuid": uuid_key},
                 operation=f"reply_message[{msg_type}]",
             )
             mid = (data or {}).get("message_id")

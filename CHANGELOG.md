@@ -9,6 +9,20 @@
 
 ## [Unreleased]
 
+- audit-2026-12（13 个 open issue 逐项核实为真 → 架构级修复，全批 465 passed 零回归，版本维持 0.0.1）：
+  - **P0 正确性**：
+    - **缺口 C = #3 + #10（恰一投递纵深防御）**：锚点换道守卫化——`_do_create`/`_do_clarify_request` 两处裸 except 改 `is_definitive_reply_anchor_error` 判定，仅锚点确定性失效（1000023/99992354/230011/231003）才允许直发，传输结果未知一律走 FALLBACK 降级红线（修复前任何 reply 失败都直发 = 双卡竞速）；幂等键——IM 投递公开方法入口生成一次 uuid4 贯穿全部重试（send 走 query `uuid`、reply 走 body `uuid`，飞书侧按 uuid 去重）；重试单层化——`_request` 剥内层网络重试（token 自愈保留），`reply_card_by_id` 剥外层 retry_transient，单次逻辑 POST 最坏 12 → 4 次
+    - **缺口 B = #2（背压契约显式接线）**：`ChatBox.create(maxsize=pending_max)`（修复前队列无界、`pending_max` 引擎侧零引用）；队列满 → `FALLBACK(queue_full:native_delivery)` 即回执（背压就是另一种降级，与永不丢帧红线同构）；控制帧入队失败安全丢弃（sweep 周期重发）；HTTP batch ≤256 上限（`MAX_BATCH_SIZE`）；02-engine §3.3 文档对齐
+    - **缺口 D = #4（绑定层输入劣化 ≠ 进程故障）**：stdio `readline` ValueError 捕获 → `frame_too_large` 错误行 + 继续；线程泵逐行上限（`MAX_STDIN_LINE_BYTES=8MB` + 剩余字节丢弃）；gateway stdio 崩溃与正常收口分道日志
+  - **P1 安全姿态**：
+    - **缺口 A**：#1 Bearer token 鉴权中间件（`LSP_GATEWAY_TOKEN`，全端点含 WS 握手）+ 非 loopback 无 token 拒绝启动（fail-closed）；#11 health 分级——默认只回汇总三计数，chat 明细 `?verbose=1` 显式拉取；#12 `sanitize_markdown` 默认剥 `<at>` 标签（`allow_at_users` 显式放开，短文本直返路径同样拦截）；#5 密钥红线（.gitignore 补 lsp.yaml/.env.*/*.pem/*.key、`lsp.yaml.example` 样例、`__main__` 配置文件明文 secret 告警）；#6 `FeishuCredentials.app_secret` repr=False
+  - **P2 同源收尾**：
+    - #7 02-engine 定稿四步文档对齐（终值 patch → 页脚/spinner → 面板 reseal → close_streaming）+ 阶段门禁新增「设计文档 diff 审计」「errors.py↔mock 注入面同步」两条纪律（00-overview §6）
+    - #8 mock 台架 200937 注入面（`rate_limit_card`）+ L2 台架退避/恢复用例
+    - #13 `LSP_GATEWAY_HOST` env（与 PORT 同轨）
+    - #9-L1 negotiate_hello detail 类型化 + 32 字符截断；L2 parse_api_response code 缺失按错误、非整数包装 FeishuAPIError；L3 token 刷新非 JSON/畸形 code 防护；L4 依赖下限收紧（aiohttp>=3.9.4、httpx>=0.28）；L5 clarify 日志不记问题原文；L6 CLI 入口测试（tests/test_main.py）；S1 README codex 表述对齐；S2 openclaw translate 失败 → deliver 原文兜底（不再静默丢内容）；S3 protocol 测试代理环境隔离
+    - 顺带修复：seq.py `mark_session_renewed` 自读时钟写引擎状态 → clock 注入（测试台架可测性）
+  - **L3 真飞书实测三项（遗留待办，通过后方可关单）**：`<at>` 标签真实渲染行为、uuid 去重真实生效、200937 真火退避
 - Phase 6：
   - **双跑对照交付（M4 收口）+ 发现项 F1/F2/F3 修复** — 同一段 hermes
     出站流（12 场景语料）分别驱动前代终态（old-hermes-ref c826ee8

@@ -14,12 +14,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
+import logging
 import os
 import sys
 from pathlib import Path
 
 from .gateway import load_config, run_gateway
 
+_logger = logging.getLogger("lark_streaming.__main__")
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
@@ -41,6 +43,12 @@ def main(argv: list[str] | None = None) -> int:
     config_path = args.config
     if config_path is None and Path("lsp.yaml").is_file():
         config_path = "lsp.yaml"
+    if config_path:
+        _logger.warning(
+            "gateway: config file %s in use — file-sourced app_secret is a "
+            "plaintext-on-disk secret (audit #5); prefer env injection "
+            "(FEISHU_APP_SECRET) and keep lsp.yaml out of VCS", config_path,
+        )
     env = dict(os.environ)
     if args.bind:
         env["LSP_GATEWAY_BIND"] = args.bind

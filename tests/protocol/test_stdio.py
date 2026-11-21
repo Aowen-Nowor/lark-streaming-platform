@@ -137,3 +137,71 @@ async def test_out_of_order_acks_allowed_but_engine_order_held(transport):
         assert st is not None and st.render.answer_text == "ab"
     finally:
         await engine.aclose()
+
+
+# ── 输入劣化防线（audit #4：劣化输入 ≠ 进程故障）─────────────────────────
+
+
+async def test_line_too_large_emits_error_and_continues(transport):
+    """超限哨兵行 → frame_too_large 错误行，serve 继续消费后续正常行."""
+    from lark_streaming.protocol.stdio import _LINE_TOO_LARGE
+
+    engine, events, clock = make_engine(transport)
+    out: list[dict] = []
+    binding = StdioBinding(engine)
+    n = await binding.serve(
+        lines=lines(
+            _LINE_TOO_LARGE,
+            env("deliver", turn="", frame="f_after", payload={"text": "ok"}),
+        ),
+        emit=make_emit(out),
+    )
+    try:
+        assert n == 2
+        assert out[0]["event"] == "error"
+        assert out[0]["payload"]["detail"] == "frame_too_large"
+        assert out[1]["event"] == "frame.ack"  # 后续行不受影响（修复前一帧带停）
+        assert out[1]["payload"]["verdict"] == "consumed"
+    finally:
+        await engine.aclose()
+
+
+async def test_thread_pump_line_limit(monkeypatch):
+    """线程泵逐行上限（audit #4）：正常流透传（哨兵仅在超限时产出）."""
+    import io
+    from types import SimpleNamespace
+
+    from lark_streaming.protocol.stdio import _stdin_lines_via_thread
+
+    huge = b"x" * 100 + b"\n"  # 100B 远小于 8MB：不触发哨兵，全部透传
+    payload = b'{"v":1,"event":"deliver"}\n' + huge + b'{"v":1}\n'
+    fake = io.BufferedReader(io.BytesIO(payload))
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(buffer=fake))
+
+    got: list[str] = []
+    async for line in _stdin_lines_via_thread():
+        got.append(line)
+    assert len(got) == 3
+    assert got[0].strip().startswith('{"v":1')
+    assert got[2].strip() == '{"v":1}'
+
+
+async def test_thread_pump_oversized_line_yields_sentinel(monkeypatch):
+    """真实超限行为：以小 MAX 值注入验证泵的截断丢弃与哨兵产出."""
+    import io
+    from types import SimpleNamespace
+
+    from lark_streaming.protocol import stdio as stdio_mod
+
+    payload = b"ok\n" + b"y" * 20 + b"\n" + b"tail\n"
+    fake = io.BufferedReader(io.BytesIO(payload))
+    monkeypatch.setattr("sys.stdin", SimpleNamespace(buffer=fake))
+    monkeypatch.setattr(stdio_mod, "MAX_STDIN_LINE_BYTES", 8)
+
+    got: list[str] = []
+    async for line in stdio_mod._stdin_lines_via_thread():
+        got.append(line)
+    assert len(got) == 3
+    assert got[0].strip() == "ok"
+    assert got[1] == stdio_mod._LINE_TOO_LARGE  # 哨兵
+    assert got[2].strip() == "tail"  # 行剩余丢弃后后续行继续

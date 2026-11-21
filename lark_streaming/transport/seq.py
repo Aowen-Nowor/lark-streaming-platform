@@ -46,10 +46,14 @@ def is_stream_timeout(exc: BaseException) -> bool:
     return getattr(exc, "code", None) == STREAM_TIMEOUT
 
 
-def mark_session_renewed(st: Any) -> None:
-    """重开后刷新状态上的会话起点（主动续期计时基线；无该字段则跳过）."""
+def mark_session_renewed(st: Any, *, now: float | None = None) -> None:
+    """重开后刷新状态上的会话起点（主动续期计时基线；无该字段则跳过）.
+
+    ``now`` 由调用方注入（引擎传 clock——可测试性红线：transport helper
+    不得自读 wall/monotonic 时钟写入引擎状态，否则测试台架 clock 被绕过）。
+    """
     try:
-        st.stream_session_at = time.monotonic()
+        st.stream_session_at = time.monotonic() if now is None else now
     except Exception:  # noqa: BLE001 — 装饰性计时基线，失败不影响自愈主链
         _logger.debug("seq: stream_session_at mark skipped", exc_info=True)
 
@@ -60,11 +64,13 @@ async def call_with_seq_recovery(
     *,
     what: str,
     reopen: Callable[[int], Awaitable[Any]] | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> None:
     """执行 ``send(st.seq)``，300317/200850 主流程自愈.
 
     ``st`` 需带可变 ``seq`` 属性（引擎回合状态对象）；
-    ``reopen`` 未注入时 200850 原样上抛（行为与前代一致）。
+    ``reopen`` 未注入时 200850 原样上抛（行为与前代一致）；
+    ``clock`` 注入重开基线时钟（引擎传 self._clock；缺省 monotonic）。
     非自愈范围异常原样上抛；超上限同样上抛。
     """
     for attempt in range(MAX_SEQ_RECOVERIES):
@@ -81,7 +87,7 @@ async def call_with_seq_recovery(
                     what, st.seq,
                 )
                 await reopen(st.seq)
-                mark_session_renewed(st)
+                mark_session_renewed(st, now=clock() if clock else None)
                 st.seq += 1
                 continue
             if not is_seq_conflict(exc):

@@ -46,6 +46,7 @@ from typing import Any, NamedTuple
 import httpx
 
 from lark_streaming.transport.errors import (
+    CARDKIT_CARD_RATE_LIMIT,      # 200937（audit #8：卡级频控入册 2026-11-20）
     CARDKIT_ELEMENT_NOT_FOUND,   # 300313
     CARDKIT_SEQUENCE_CONFLICT,   # 300317
     CARDKIT_STREAMING_CLOSED,    # 300309
@@ -240,6 +241,22 @@ class MockFeishuREST:
         """一次性武装 200850（Q2）：下次 stream_element 撞线；settings
         ``streaming_mode:true``（官方恢复动作）后解除并恢复."""
         self.cards[card_id].expired = True
+
+    def rate_limit_card(self, card_id: str, times: int = 1) -> None:
+        """一次性武装 200937 卡级频控（audit #8：与 99991400 平台级分道；
+        2026-11-20 L3 真火入册 "card updated too frequently"）.
+
+        作用于该卡下次 stream_element 更新（卡级频控的主战场），times 次
+        后自动解除——2026-11-20 实测语义：并发同元素竞速触发。
+
+        纪律（audit #8 规则）：errors.py 错误码注册表新增条目时，必须
+        同步本 mock 的注入面与 L2 台架用例——mock 滞后于错误码表 =
+        新码在接近真实的台架层零覆盖。
+        """
+        self.fail_next(
+            "stream_element", CARDKIT_CARD_RATE_LIMIT,
+            msg="card updated too frequently", times=times,
+        )
 
     # ── 观测面 ────────────────────────────────────────────────────────────
 

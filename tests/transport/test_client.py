@@ -323,3 +323,141 @@ class TestTokenRetry:
             assert card_id == "c_ok"  # token 失效 → 自刷新 → 成功
         finally:
             await tr.aclose()
+
+
+class TestRetrySingleLayer:
+    """audit #10：retry_transient 是唯一通用重试层，_request 不再内层重试网络错误."""
+
+    async def test_network_error_max_attempts_is_four(self, monkeypatch):
+        """网络错误最坏尝试 = 1 原始 + 3 重试 = 4（修复前内层 3 × 外层 4 = 12）."""
+        async def fake_sleep(d):
+            pass
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        calls = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            raise httpx.ConnectError("net down", request=request)
+
+        route = Route(lambda m, p: m == "POST" and p.endswith("/im/v1/messages"), respond)
+        tr = make_transport(route)
+        try:
+            with pytest.raises(httpx.ConnectError):
+                await tr.send_text_to_chat("oc_chat", "x")
+            assert len(calls) == 4
+        finally:
+            await tr.aclose()
+
+    async def test_http_401_exhaustion_not_amplified(self, monkeypatch):
+        """401 token 自愈耗尽（内层 3 次）后上抛，不被外层 retry_transient 放大."""
+        async def fake_sleep(d):
+            pass
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        msg_calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            if path.endswith("/auth/v3/tenant_access_token/internal"):
+                return json_response(TOKEN_RESPONSE)
+            msg_calls.append(1)
+            return json_response(api_err(0, "unauthorized"), status_code=401)
+
+        tr = FeishuTransport(make_credentials(), http=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        try:
+            with pytest.raises(FeishuAPIError):
+                await tr.send_text_to_chat("oc_chat", "x")
+            # 消息端点恰好 3 次（token 自愈层），非 3×4
+            assert len(msg_calls) == 3
+        finally:
+            await tr.aclose()
+
+    async def test_reply_no_outer_retry_wrapper(self, monkeypatch):
+        """reply_card_by_id 不再包外层 retry_transient（修复前双层叠加）."""
+        async def fake_sleep(d):
+            pass
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        calls = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            calls.append(1)
+            raise httpx.ConnectError("net down", request=request)
+
+        route = Route(lambda m, p: m == "POST" and "/reply" in p, respond)
+        tr = make_transport(route)
+        try:
+            with pytest.raises(httpx.ConnectError):
+                await tr.reply_card_by_id("om_anchor", "c_abc")
+            assert len(calls) == 4  # 单层：1 + 3
+        finally:
+            await tr.aclose()
+
+
+class TestIdempotencyKey:
+    """audit #3：IM 投递公开方法生成一次 uuid4，贯穿全部重试（飞书侧去重键）."""
+
+    async def test_send_uuid_query_stable_across_retries(self, monkeypatch):
+        async def fake_sleep(d):
+            pass
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        uuids: list[str] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            uuids.append(request.url.params.get("uuid") or "")
+            if len(uuids) == 1:
+                raise httpx.ConnectError("net down", request=request)
+            return json_response(api_ok({"message_id": "om_1"}))
+
+        route = Route(lambda m, p: m == "POST" and p.endswith("/im/v1/messages"), respond)
+        tr = make_transport(route)
+        try:
+            mid = await tr.send_text_to_chat("oc_chat", "hi")
+            assert mid == "om_1"
+            assert len(uuids) == 2
+            assert uuids[0] and uuids[0] == uuids[1]  # 同一逻辑投递共享 uuid
+        finally:
+            await tr.aclose()
+
+    async def test_reply_uuid_body_stable_across_retries(self, monkeypatch):
+        async def fake_sleep(d):
+            pass
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+        uuids: list[str] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            uuids.append(str(body_of(request).get("uuid", "")))
+            if len(uuids) == 1:
+                raise httpx.ConnectError("net down", request=request)
+            return json_response(api_ok({"message_id": "om_r"}))
+
+        route = Route(lambda m, p: m == "POST" and "/reply" in p, respond)
+        tr = make_transport(route)
+        try:
+            mid = await tr.reply_card_by_id("om_anchor", "c_abc")
+            assert mid == "om_r"
+            assert len(uuids) == 2
+            assert uuids[0] and uuids[0] == uuids[1]
+        finally:
+            await tr.aclose()
+
+    async def test_distinct_calls_distinct_uuids(self):
+        """不同逻辑投递 → 不同 uuid（不互相误伤去重）."""
+        seen: list[str] = []
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.params.get("uuid") or "")
+            return json_response(api_ok({"message_id": f"om_{len(seen)}"}))
+
+        route = Route(lambda m, p: m == "POST" and p.endswith("/im/v1/messages"), respond)
+        tr = make_transport(route)
+        try:
+            await tr.send_text_to_chat("oc_chat", "a")
+            await tr.send_text_to_chat("oc_chat", "b")
+            assert len(seen) == 2
+            assert seen[0] and seen[1] and seen[0] != seen[1]
+        finally:
+            await tr.aclose()

@@ -1,0 +1,30 @@
+# lsp.yaml.example — 网关配置样例（audit #5）
+#
+# 使用方式：
+#   cp lsp.yaml.example lsp.yaml && 按需填写
+# 红线：
+#   lsp.yaml 已在 .gitignore（可含明文凭证），永不提交；
+#   推荐 env 注入凭证（FEISHU_APP_ID / FEISHU_APP_SECRET），文件只留绑定面。
+
+feishu:
+  # app_id: cli_xxx
+  # app_secret: <推荐留空走 env FEISHU_APP_SECRET>
+  domain: feishu            # feishu | lark
+
+gateway:
+  bind: stdio               # stdio | http | ws（逗号多值）
+  host: "127.0.0.1"         # 非 loopback 监听必须配 auth_token（fail-closed）
+  port: 7800
+  # auth_token: <HTTP/WS Bearer 鉴权；推荐走 env LSP_GATEWAY_TOKEN>
+
+settings:
+  watchdog_idle_sec: 300
+  panel_flush_sec: 0.2
+  clarify_window_sec: 1.2
+  card_ttl_sec: 600
+  pending_max: 64
+
+theme:
+  reasoning_level: full     # full | brief | hidden
+  # tool_icons:
+  #   grep: "🔍"

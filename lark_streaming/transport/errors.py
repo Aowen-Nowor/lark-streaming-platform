@@ -172,15 +172,32 @@ def parse_api_response(payload: Any, operation: str, log_id: str = "") -> Any:
 
     飞书约定：HTTP 200 承载业务码（code=0 成功）；HTTP 4xx/5xx 时 body
     亦含 code/msg。调用方负责 HTTP 层异常，本函数只裁决业务码。
+
+    audit #9-L2：``code`` 缺失不再默认当成功（代理错误页恰好是 JSON dict
+    时以「missing message_id」误导排障）→ 显式错误；``code`` 非整数不再
+    裸抛 ValueError（绕过错误分类）→ 包装为 FeishuAPIError(code=0)。
     """
     if not isinstance(payload, dict):
         raise FeishuAPIError(f"{operation}: non-dict response payload", 0, log_id)
-    code = payload.get("code", 0)
+    if "code" not in payload:
+        raise FeishuAPIError(
+            f"{operation}: response missing code field (proxy/gateway page?)",
+            0, log_id,
+        )
+    raw_code = payload["code"]
+    try:
+        code = int(raw_code)
+    except (TypeError, ValueError):
+        raise FeishuAPIError(
+            f"{operation}: malformed code {str(raw_code)[:32]}, "
+            f"msg={str(payload.get('msg', ''))[:120]}",
+            0, log_id,
+        ) from None
     if code == 0:
         return payload.get("data")
     msg = str(payload.get("msg", ""))
     raise FeishuAPIError(
-        f"{operation}: code={code}, msg={msg}", int(code), log_id=log_id
+        f"{operation}: code={code}, msg={msg}", code, log_id=log_id
     )
 
 

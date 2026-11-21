@@ -72,8 +72,31 @@ class TenantTokenManager:
         for attempt in range(3):
             try:
                 resp = await self._http.post(url, json=payload)
-                body = resp.json()
-                code = int(body.get("code", -1))
+                try:
+                    body = resp.json()
+                except ValueError:
+                    # audit #9-L3：非 JSON 响应（502 网关错误页等）按网络
+                    # 错误重试——与 client._request 同款防护，不裸抛
+                    last_error = FeishuAPIError(
+                        f"tenant_access_token: non-json response "
+                        f"(http {resp.status_code})"
+                    )
+                    if attempt < 2:
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                        continue
+                    raise last_error
+                raw_code = body.get("code", -1)
+                try:
+                    code = int(raw_code)
+                except (TypeError, ValueError):
+                    # 同 L2 精神：畸形响应按可重试异常处理（代理/中间件产物）
+                    last_error = FeishuAPIError(
+                        f"tenant_access_token: malformed code {str(raw_code)[:32]}"
+                    )
+                    if attempt < 2:
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                        continue
+                    raise last_error
                 if code != 0:
                     msg = sanitize_message(str(body.get("msg", "")))
                     # 凭证错误（无有效 token 返回）不可重试
@@ -81,7 +104,10 @@ class TenantTokenManager:
                         f"tenant_access_token: code={code}, msg={msg}", code
                     )
                 token = str(body.get("tenant_access_token", "") or "")
-                expire = int(body.get("expire", 0) or 0)
+                try:
+                    expire = int(body.get("expire", 0) or 0)
+                except (TypeError, ValueError):
+                    expire = 0  # 畸形 expire → 走下方 empty token/expire 拒绝
                 if not token or expire <= 0:
                     raise FeishuAPIError("tenant_access_token: empty token/expire")
                 self._token = token

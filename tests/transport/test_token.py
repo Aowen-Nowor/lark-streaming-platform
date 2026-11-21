@@ -124,3 +124,16 @@ def make_cred():
     from lark_streaming.credentials import FeishuCredentials
 
     return FeishuCredentials(app_id="cli_test", app_secret="secret_test")
+
+
+def test_credentials_secret_hidden_in_repr():
+    """audit #6：app_secret 设 repr=False——repr/异常日志不泄漏明文."""
+    from lark_streaming.credentials import FeishuCredentials
+
+    cred = FeishuCredentials(app_id="cli_x", app_secret="supersecret123")
+    r = repr(cred)
+    assert "supersecret123" not in r
+    assert "cli_x" in r  # app_id 不敏感可留
+    # 语义可用性不受影响：字段仍可正常读取与校验
+    assert cred.app_secret == "supersecret123"
+    assert cred.is_complete() is True

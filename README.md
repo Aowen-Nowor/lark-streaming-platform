@@ -38,7 +38,7 @@
 ## 架构（五层，依赖单向向下）
 
 ```
-┌ 接入层   adapters/hermes | openclaw | codex | …（每接入方只写这层）
+┌ 接入层   adapters/hermes | openclaw | …（其他 agent 按 LSEP/1 通用协议接入，每接入方只写这层）
 ├ 协议层   统一事件信封（JSON over stdio / HTTP / WS）+ 多语言 SDK
 ├ 编排层   显式回合状态机 / 竞态守卫 / 会话续期 / 看门狗 / GC / 降级
 ├ 渲染层   版本化卡片 Schema + 主题 token → 纯函数渲染

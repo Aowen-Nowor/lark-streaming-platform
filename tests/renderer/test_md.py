@@ -116,3 +116,33 @@ class TestMarkdownCache:
         for i in range(600):
             cache.sanitize_line(f"line-{i} " + "pad " * 30)
         assert isinstance(cache.sanitize_line(line), str)
+
+
+class TestAtTagStripping:
+    """audit #12：``<at>`` 标签默认剥除（LLM 输出不得真 @ 人/群），显式放开."""
+
+    def test_at_tag_stripped_by_default(self) -> None:
+        text = "请查看 <at id=ou_123></at> 的反馈 <at email=a@b.com></at>"
+        out = sanitize_markdown(text)
+        assert "<at" not in out
+        assert "</at" not in out
+        assert "的反馈" in out  # 正文内容保留
+
+    def test_at_tag_short_text_also_stripped(self) -> None:
+        """短文本（<100 字符直返路径）同样拦截——安全动作先于装饰性短路."""
+        out = sanitize_markdown("<at id=all></at> hi")
+        assert "<at" not in out
+        assert "hi" in out
+
+    def test_at_tag_self_closing_and_case_insensitive(self) -> None:
+        out = sanitize_markdown("<AT id=x /> ping </AT >")
+        assert "at id" not in out.lower().replace(" ", "")
+        assert "ping" in out
+
+    def test_allow_at_users_explicit_optin(self) -> None:
+        text = "cc <at id=ou_123></at>"
+        out = sanitize_markdown(text, allow_at_users=True)
+        assert "<at id=ou_123></at>" in out  # 显式放开原样保留
+
+    def test_text_without_at_untouched(self) -> None:
+        assert sanitize_markdown("attendance at 9am") == "attendance at 9am"

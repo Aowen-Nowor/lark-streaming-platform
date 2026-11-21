@@ -22,3 +22,15 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+# 密钥红线（audit #5）：配置文件可含明文 app_secret/token/证书，永不入库
+lsp.yaml
+lsp.*.yaml
+!lsp.yaml.example
+.env.*
+!*.env.example
+*.pem
+*.key
+*.crt
+credentials*.json
+secrets*.json

@@ -11,6 +11,9 @@
     FEISHU_DOMAIN=feishu|lark           # 站点（默认 feishu）
     LSP_GATEWAY_BIND=stdio|http|ws      # 形态 B 绑定（可多值，逗号分隔）
     LSP_GATEWAY_PORT=7800               # HTTP/WS 端口
+    LSP_GATEWAY_HOST=127.0.0.1          # HTTP/WS 监听地址（audit #13）
+    LSP_GATEWAY_TOKEN=<secret>          # HTTP/WS Bearer 鉴权（audit #1：
+                                        # 非 loopback 监听必须配置，否则拒绝启动）
     LSP_LOG_LEVEL=INFO
 
 配置文件（``lsp.yaml``，经 ``--config`` 指定）支持全部设置键（§4 表）
@@ -61,6 +64,7 @@ class GatewayConfig:
     host: str = "127.0.0.1"
     port: int = 7800
     log_level: str = "INFO"
+    auth_token: str = ""
     settings: EngineSettings = field(default_factory=EngineSettings)
     theme: Theme = field(default_factory=Theme)
     credentials: FeishuCredentials | None = None
@@ -164,7 +168,13 @@ def load_config(
         port = 7800
     port = min(max(port, 1), 65535)
 
-    host = str(gateway_file.get("host") or "127.0.0.1")
+    # audit #13：host 同样走 env > 配置文件（与 PORT 一致；§6 顺序约定）
+    host = str(e.get("LSP_GATEWAY_HOST") or gateway_file.get("host") or "127.0.0.1")
+
+    # ── HTTP/WS Bearer token（audit #1：env > 配置文件；空 = 仅 loopback 可用）─
+    auth_token = str(
+        e.get("LSP_GATEWAY_TOKEN") or gateway_file.get("auth_token") or ""
+    )
 
     # ── 日志级别 ───────────────────────────────────────────────────────
     log_level = str(e.get("LSP_LOG_LEVEL") or file_data.get("log_level") or "INFO").upper()
@@ -216,6 +226,7 @@ def load_config(
 
     return GatewayConfig(
         binds=binds, host=host, port=port, log_level=log_level,
+        auth_token=auth_token,
         settings=settings, theme=theme, credentials=credentials,
     )
 
@@ -261,6 +272,7 @@ async def run_gateway(
 
             runner = await serve_http(
                 engine, host=config.host, port=config.port, settings=config.settings,
+                auth_token=config.auth_token,
             )
             _logger.info("gateway: http/ws listening %s:%s", config.host, config.port)
         if "stdio" in config.binds:
@@ -273,7 +285,17 @@ async def run_gateway(
                 )
             )
             # stdio 主导停机：输入耗尽 = 接入方收口 → 触发统一停机
-            stdio_task.add_done_callback(lambda _t: stop.set())
+            def _stdio_done(task: asyncio.Task[int]) -> None:
+                if not task.cancelled() and task.exception() is not None:
+                    # audit #4：绑定层崩溃 ≠ 正常收口——error 摘要留痕，
+                    # 停机仍执行（网关无 stdio 即无事件源），但日志可归因
+                    exc = task.exception()
+                    _logger.error(
+                        "gateway: stdio binding crashed: %s: %s",
+                        type(exc).__name__, exc,
+                    )
+                stop.set()
+            stdio_task.add_done_callback(_stdio_done)
         if "stdio" not in config.binds and runner is None:
             _logger.error("gateway: no bindable transport in %s", config.binds)
             return 2

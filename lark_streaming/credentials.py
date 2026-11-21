@@ -7,7 +7,7 @@ env 约定（05-adapters §6）：FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_DOM
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 FEISHU_BASE = "https://open.feishu.cn/open-apis"
 LARK_BASE = "https://open.larksuite.com/open-apis"
@@ -15,10 +15,14 @@ LARK_BASE = "https://open.larksuite.com/open-apis"
 
 @dataclass(frozen=True)
 class FeishuCredentials:
-    """飞书应用凭证（tenant_access_token 的换取材料）."""
+    """飞书应用凭证（tenant_access_token 的换取材料）.
+
+    密钥红线（audit #6）：``app_secret`` 设 ``repr=False``——异常日志、
+    REPL 倾印、dataclasses.asdict 外的任意 repr 场景不再泄漏明文。
+    """
 
     app_id: str
-    app_secret: str
+    app_secret: str = field(repr=False)
     base_url: str = FEISHU_BASE
 
     def __post_init__(self) -> None:

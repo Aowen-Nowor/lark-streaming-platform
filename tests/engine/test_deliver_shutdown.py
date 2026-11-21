@@ -179,7 +179,7 @@ async def test_snapshot_health_shape(transport):
         await engine.submit(env("turn.start", chat=CHAT, turn="t_h"))
         await engine.submit(env("answer.delta", chat=CHAT, turn="t_h", payload={"delta": "你好"}, seq=1))
         await engine.submit(env("deliver", chat="oc_chat2", turn="", payload={"text": "x"}))
-        health = engine.snapshot_health()
+        health = engine.snapshot_health(verbose=True)
         assert health["chats_total"] == 2
         assert health["active_cards"] == 1
         assert health["degraded_chats"] == 0
