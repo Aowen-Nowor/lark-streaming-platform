@@ -51,13 +51,14 @@
 
 ## 3. 传输绑定
 
-同一信封，三种绑定；接入方按部署形态选择。
+同一信封，三种接入绑定 + 一类回调绑定；接入方按部署形态选择。
 
 | 绑定 | 交互模型 | 适用 |
 |------|----------|------|
 | **stdio** | 行分隔 JSON：子进程 stdout 每行一个事件，引擎 stderr 同格式回 ack | 桥接子进程形态（openclaw 起托管进程） |
 | **HTTP** | `POST /v1/events` 单事件（同步返回 ack）；`POST /v1/events:batch` 批量（数组逐个返回 ack 数组） | 低频接入、脚本、调试 |
 | **WS** | 长连接：客户端→服务端事件帧，服务端→客户端 ack 帧；连接级 `hello` 握手 | 高频流式、多 chat 复用 |
+| **feishu-callback** | `POST /v1/feishu/callback`：飞书侧卡片交互回调 → LSEP 事件（仅 clarify.answer）；验签+解密后走引擎同一条入口 | 卡片交互闭环（澄清按钮回调；§3.2） |
 
 HTTP 端点约定：
 
@@ -83,6 +84,43 @@ WS 握手（§6）替代 HTTP 的无状态性；stdio 无握手（进程即会�
   接入方不得假设 ack 时序）；同 chat 的 ack 顺序由引擎 per-chat 单
   消费者保证与消费序一致。WS 连接断开时在途帧继续被引擎消费（卡片
   管线完成性优先于回执通道）。
+
+### 3.2 feishu-callback 绑定注记（卡片交互回程）
+
+飞书回调是**第四类入站面**：方向与接入绑定相反（飞书服务器 → 平台），
+承载卡片交互（澄清按钮）回流。与接入绑定的三同三异：
+
+- **同**：解析产物走 `engine.submit` 同一条入口（同队列同背压同幂等，
+  不开旁路）；永不丢帧红线同构；引擎状态机守卫同一套。
+- **异 1（独立鉴权域）**：飞书回调无法携带 Bearer——验签走
+  `verification_token`（明文比对）/ `encrypt_key`（AES-256-CBC，
+  key = sha256(encrypt_key)）独立鉴权域，**不受**
+  `LSP_GATEWAY_TOKEN` 中间件覆盖（若被覆盖，非 loopback 部署强制
+  配 token 时回调恒 401 等于不存在）。
+- **异 2（HTTP 语义替 ack）**：飞书不是 LSEP 客户端，不认 ack 帧——
+  HTTP 状态码承载裁决：consumed → 200；`fallback(queue_full)` → 503
+  （飞书回调自带退避重试接管该方向的传输级重试；PAUSED→RESUME
+  守卫幂等吸收重复投递）；其余 fallback → 200（控制帧无原生履行
+  义务，02-engine §6）。
+- **异 3（路由反向解析）**：回调载荷只带 `clarify_id`，(chat_id,
+  turn_id) 由 `engine.resolve_clarify` 从状态解析（仅 PAUSED 态
+  命中；状态是唯一事实源，不建反向索引）；未命中（过期/已答/重启）
+  → 200 ignored（前代 clarify._expired_response 语义，不触发飞书
+  重试风暴）。
+
+事件分道：`url_verification` → echo challenge（token 比对通过才
+  echo）；`card.action.trigger` 且 behaviors value 含
+  `lsp_clarify_action` → clarify.answer 提交（values 透传，选项序号
+  → 原值映射由引擎持有的 form 原值承担；select/input 载荷槽位以
+  L3 R7 实测校准）；其余事件类型（im.message.receive_v1 等——事件
+  订阅 URL 误指场景）→ 200 无害忽略。用户消息入站不在本绑定范围
+  （05-adapters §5.1：留在 hermes 原生渠道）。
+
+fail-closed：未配置 `verification_token` → 端点恒 503（可见禁用态）；
+密文到达而无 key / 解密失败 / token 错配 → 403，引擎零状态变更。
+配置面：`FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY` env，或
+lsp.yaml `feishu.verification_token` / `feishu.encrypt_key`
+（均密钥纪律：repr=False、永不入库）。
 
 ## 4. 事件目录（v1 最小集）
 

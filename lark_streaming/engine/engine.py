@@ -1024,6 +1024,27 @@ class StreamingEngine:
 
     # ── 管道：澄清（前代 v2.0.26/34 同卡续流语义的协议化）──────────────────
 
+    def resolve_clarify(self, clarify_id: str) -> tuple[str, str] | None:
+        """回调路由解析：clarify_id → (chat_id, turn_id)（feishu-callback 绑定）.
+
+        仅 PAUSED 态命中——引擎状态是身份唯一事实源（刻意不建反向索引：
+        索引与状态双写同步本身就是竞态温床，audit #3 同族教训；O(N) 扫描
+        在本网关 chat 规模下可忽略）。过期/已答/重启后的回调 → None，
+        端点按 200 ignored 处理（前代 clarify._expired_response 语义，
+        01-protocol §3.2）。
+        """
+        if not clarify_id:
+            return None
+        for chat_id, box in self._chats.items():
+            st = box.turn
+            if (
+                st is not None
+                and st.phase is TurnPhase.PAUSED
+                and st.clarify_id == clarify_id
+            ):
+                return chat_id, st.turn_id
+        return None
+
     def _form_from_payload(self, raw: Any) -> ClarifyForm:
         if not isinstance(raw, dict):
             raise ValueError("form_not_an_object")

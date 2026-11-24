@@ -191,6 +191,8 @@ def load_config(
             credentials = FeishuCredentials(
                 app_id=app_id, app_secret=app_secret,
                 base_url=LARK_BASE if domain == "lark" else FEISHU_BASE,
+                verification_token=str(feishu_file.get("verification_token") or ""),
+                encrypt_key=str(feishu_file.get("encrypt_key") or ""),
             )
 
     # ── 设置键：env 同名覆盖 > 配置文件 settings 段 > 默认值 ────────────
@@ -273,6 +275,12 @@ async def run_gateway(
             runner = await serve_http(
                 engine, host=config.host, port=config.port, settings=config.settings,
                 auth_token=config.auth_token,
+                feishu_verification_token=(
+                    config.credentials.verification_token if config.credentials else ""
+                ),
+                feishu_encrypt_key=(
+                    config.credentials.encrypt_key if config.credentials else ""
+                ),
             )
             _logger.info("gateway: http/ws listening %s:%s", config.host, config.port)
         if "stdio" in config.binds:

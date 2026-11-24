@@ -9,6 +9,7 @@
 
 ## [Unreleased]
 
+- feishu-callback 绑定（01-protocol §3.2，第四类入站面——卡片交互回程闭环）：澄清按钮回调此前零承接面（renderer 渲染了 `lsp_clarify_action` 回调值但全仓库无 card.action 处理，生产上按钮点击必然打到 app 回调地址无人接 = 澄清交互死路）。新增 `POST /v1/feishu/callback`：独立鉴权域（verification_token/encrypt_key，AES-256-CBC 解密；Bearer 中间件显式豁免回调路径——飞书回调无法携带 Bearer，否则非 loopback 部署强制配 token 时回调恒 401 等于不存在）；`card.action.trigger` 按 `lsp_clarify_action` 路由 → `engine.resolve_clarify`（仅 PAUSED 态命中，状态唯一事实源不建反向索引）→ LSEP `clarify.answer` 走 `engine.submit` 同一条入口（同队列同背压同幂等，不开旁路）；verdict 分道 consumed→200 / queue_full→503（飞书回调退避重试接管该方向传输级重试）/ 其余→200；未命中（过期/已答/重启）→ 200 ignored（前代 expired 语义，不触发重试风暴）；fail-closed：未配置 token → 端点恒 503，密文无 key/解密失败/token 错配 → 403 引擎零状态变更；事件订阅 URL 误指场景（im.message.receive_v1 等）→ 200 无害忽略。配置面 FEISHU_VERIFICATION_TOKEN / FEISHU_ENCRYPT_KEY env 或 lsp.yaml feishu 段（repr=False 密钥纪律）；cryptography 进 gateway extra。select/input 回调载荷槽位（action.option / action.input_value）标注 L3 R7 实测校准。17 项回归全绿（总 482 passed + 12 skipped），版本维持 0.0.1
 - audit-2026-12（13 个 open issue 逐项核实为真 → 架构级修复，全批 465 passed 零回归，版本维持 0.0.1）：
   - **P0 正确性**：
     - **缺口 C = #3 + #10（恰一投递纵深防御）**：锚点换道守卫化——`_do_create`/`_do_clarify_request` 两处裸 except 改 `is_definitive_reply_anchor_error` 判定，仅锚点确定性失效（1000023/99992354/230011/231003）才允许直发，传输结果未知一律走 FALLBACK 降级红线（修复前任何 reply 失败都直发 = 双卡竞速）；幂等键——IM 投递公开方法入口生成一次 uuid4 贯穿全部重试（send 走 query `uuid`、reply 走 body `uuid`，飞书侧按 uuid 去重）；重试单层化——`_request` 剥内层网络重试（token 自愈保留），`reply_card_by_id` 剥外层 retry_transient，单次逻辑 POST 最坏 12 → 4 次

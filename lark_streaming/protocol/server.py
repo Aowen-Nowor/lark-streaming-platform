@@ -29,6 +29,7 @@ from aiohttp import WSMsgType, web
 
 from lark_streaming.engine import StreamingEngine
 
+from .feishu_callback import FEISHU_CALLBACK_PATH, build_feishu_callback_handler
 from .messages import WireFrameError, negotiate_hello, parse_frame, wire_error
 
 _logger = logging.getLogger("lark_streaming.protocol.server")
@@ -43,9 +44,15 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 #: 网关 Bearer token 环境变量名（audit #1：secure-by-default 信任模型）
 GATEWAY_TOKEN_ENV = "LSP_GATEWAY_TOKEN"
 
+#: feishu-callback 绑定验签材料 env 名（01-protocol §3.2；独立鉴权域——
+#: 飞书回调无法携带 Bearer，验签走 verification_token/encrypt_key）
+FEISHU_VERIFICATION_TOKEN_ENV = "FEISHU_VERIFICATION_TOKEN"
+FEISHU_ENCRYPT_KEY_ENV = "FEISHU_ENCRYPT_KEY"
+
 __all__ = [
     "build_app", "serve_http", "stop_http", "run_ws_connection",
     "MAX_BATCH_SIZE", "GATEWAY_TOKEN_ENV",
+    "FEISHU_VERIFICATION_TOKEN_ENV", "FEISHU_ENCRYPT_KEY_ENV",
 ]
 
 
@@ -59,11 +66,17 @@ def _bearer_middleware(token: str):
     覆盖 /v1/events、/v1/events:batch、/v1/health、/v1/ws（WS 握手同样
     走 HTTP 升级请求，middleware 生效）；未携带或错配 → 401 + 错误对象
     （与协议错误同形态，§7）。
+
+    唯一豁免：/v1/feishu/callback（§3.2 独立鉴权域）——飞书回调无法
+    携带 Bearer，验签走 verification_token/encrypt_key；若被 Bearer
+    覆盖，非 loopback 部署（强制配 token）下回调端点恒 401 等于不存在。
     """
     expected = f"Bearer {token}"
 
     @web.middleware
     async def mw(request: web.Request, handler) -> web.StreamResponse:
+        if request.path == FEISHU_CALLBACK_PATH:
+            return await handler(request)
         if request.headers.get("Authorization", "") != expected:
             return web.json_response(wire_error("unauthorized"), status=401)
         return await handler(request)
@@ -76,10 +89,14 @@ def build_app(
     *,
     settings: Any = None,
     auth_token: str = "",
+    feishu_verification_token: str = "",
+    feishu_encrypt_key: str = "",
 ) -> web.Application:
     """装配 HTTP+WS 网关应用（Phase 4 网关 shell 的组装基座）.
 
-    ``auth_token`` 非空 → 全端点 Bearer 鉴权（audit #1 secure-by-default）。
+    ``auth_token`` 非空 → 全端点 Bearer 鉴权（audit #1 secure-by-default）；
+    feishu-callback 路由独立鉴权域（飞书回调无法携带 Bearer，§3.2），
+    未配置 verification_token → 端点恒 503（fail-closed 可见禁用态）。
     """
     app = web.Application()
     if auth_token:
@@ -130,6 +147,14 @@ def build_app(
     app.router.add_post("/v1/events:batch", events_batch)
     app.router.add_get("/v1/health", health)
     app.router.add_get("/v1/ws", websocket)
+    app.router.add_post(
+        FEISHU_CALLBACK_PATH,
+        build_feishu_callback_handler(
+            engine,
+            verification_token=feishu_verification_token,
+            encrypt_key=feishu_encrypt_key,
+        ),
+    )
     return app
 
 
@@ -213,12 +238,16 @@ async def serve_http(
     port: int = 7800,
     settings: Any = None,
     auth_token: str | None = None,
+    feishu_verification_token: str | None = None,
+    feishu_encrypt_key: str | None = None,
 ) -> web.AppRunner:
     """启动 HTTP/WS 监听（返回 runner 供调用方管理生命周期）.
 
     fail-closed（audit #1）：非 loopback 监听且无 token（参数未传时回落
     env ``LSP_GATEWAY_TOKEN``）→ 拒绝启动——secure-by-default 信任模型：
     错误配置宁可起不来，不可裸奔上线。
+    feishu-callback 验签材料同样参数优先、env 回落
+    （``FEISHU_VERIFICATION_TOKEN`` / ``FEISHU_ENCRYPT_KEY``，§3.2）。
     """
     token = auth_token if auth_token is not None else os.environ.get(GATEWAY_TOKEN_ENV, "")
     if host not in _LOOPBACK_HOSTS and not token:
@@ -226,7 +255,20 @@ async def serve_http(
             f"gateway: non-loopback bind {host} without {GATEWAY_TOKEN_ENV} "
             "is refused (fail-closed; set the env or bind 127.0.0.1)"
         )
-    runner = web.AppRunner(build_app(engine, settings=settings, auth_token=token))
+    cb_token = (
+        feishu_verification_token
+        if feishu_verification_token is not None
+        else os.environ.get(FEISHU_VERIFICATION_TOKEN_ENV, "")
+    )
+    cb_key = (
+        feishu_encrypt_key
+        if feishu_encrypt_key is not None
+        else os.environ.get(FEISHU_ENCRYPT_KEY_ENV, "")
+    )
+    runner = web.AppRunner(build_app(
+        engine, settings=settings, auth_token=token,
+        feishu_verification_token=cb_token, feishu_encrypt_key=cb_key,
+    ))
     await runner.setup()
     site = web.TCPSite(runner, host=host, port=port)
     await site.start()

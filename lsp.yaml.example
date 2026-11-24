@@ -10,6 +10,12 @@ feishu:
   # app_id: cli_xxx
   # app_secret: <推荐留空走 env FEISHU_APP_SECRET>
   domain: feishu            # feishu | lark
+  # ── feishu-callback 绑定（01-protocol §3.2，卡片交互回程）────────
+  # 未配置 verification_token → 回调端点恒 503（fail-closed 可见禁用态）；
+  # encrypt_key 可选：配置后接受 {"encrypt": ...} 密文回调（AES-256-CBC）。
+  # 推荐 env 注入：FEISHU_VERIFICATION_TOKEN / FEISHU_ENCRYPT_KEY
+  # verification_token: <飞书开放平台「事件订阅」页的 Verification Token>
+  # encrypt_key: <同页 Encrypt Key（启用加密时才需要）>
 
 gateway:
   bind: stdio               # stdio | http | ws（逗号多值）
